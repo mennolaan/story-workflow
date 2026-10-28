@@ -1,6 +1,6 @@
 ---
 name: story
-description: Run one Azure DevOps user story as its orchestrator. This session talks to the user and does every outward action. Handoff sessions plan, implement and review, report back by status token, and never ask the user. Every session saves its state at 35% context and compacts at the next turn boundary.
+description: Run one board story as its orchestrator. This session talks to the user and does every outward action. Handoff sessions plan, implement and review, report back by status token, and never ask the user. Every session saves its state at 35% context and compacts at the next turn boundary.
 argument-hint: <work item id>
 disable-model-invocation: true
 ---
@@ -13,9 +13,9 @@ This session is the **orchestrator** of one story. It asks the user every questi
 
 | Role | Started by | Worktree, base | Owns (single writer) | Asks the user |
 |---|---|---|---|---|
-| orchestrator | the user, `/story <id>` | its own | the ledger; board, push, PR, Azure | yes, the only one |
-| plan | orchestrator, `fresh` | own, detached at `origin/development` | `<slug>.md` | no |
-| implement | orchestrator, `fresh`, after PLAN READY | own, `feature/<id>-<slug>` | code, local commits, `## Implementation status` | no |
+| orchestrator | the user, `/story <id>` | its own | the ledger; board, push, PR, cloud | yes, the only one |
+| plan | orchestrator, `fresh` | own, detached at `origin/{{BASE}}` | `<slug>.md` | no |
+| implement | orchestrator, `fresh`, after PLAN READY | own, `{{BRANCH}}` | code, local commits, `## Implementation status` | no |
 | pr-review | orchestrator, `fresh`, after the PR opens | own, detached at the PR head | `<slug>.d/pr-review-docket.md` | no |
 
 Handoff sessions run `claude-opus-5-5` at `high`, in the orchestrator's permission mode. A session in another permission mode holds incoming messages for approval.
@@ -39,8 +39,12 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 
 ## Start
 
-1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`.
-2. Read the story and its tasks from the board (`az boards work-item show --org https://dev.azure.com/tme-lean --id <id>`).
+0. Check the repo. Do nothing else until this passes.
+   - Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --check`. When it exits 1, stop. Show its message to the user and end the turn. The message names `.claude/story.json` and `story.example.json`.
+   - Read the config file that it prints. It fills the placeholders below.
+   - Run `claude --version` and show the version. The context-keeper mod needs 2.1.308 or later. Below that, or when `claude` is not on PATH, say that the mod may not run and the backstop compacts instead.
+1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`. When it refuses because the backstop is off, stop and show the user its message.
+2. Read the story and its tasks from the board with `{{BOARD_SHOW}}`.
 3. Write `<slug>.d/ledger.md` from the template. Set the session title.
 4. Ask scope questions only when the board leaves a real gap.
 5. Start the plan session with `briefs/plan.md`, filled in.
@@ -51,29 +55,37 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 - The brief is the matching file in `briefs/`, with every `{{...}}` filled in. The orchestrator id is `$CLAUDE_CODE_HOST_SESSION_ID` in this session.
 - Record the child (name, id, role, state) in the ledger at once.
 - **Unpushed branch.** `start_session` with `source_branch` cuts the worktree from `origin/<branch>` when that remote ref exists (live check, 2026-10-27). Before you start a session from a feature branch with unpushed commits, give a local-only branch (no remote ref) as `source_branch`, or push first after the user's go.
-- **Live checks of `.claude/` changes.** A worktree session that the desktop app starts reads settings, hooks, skills, agents, commands and `.mcp.json` from the main checkout root. Its hooks run there and `$CLAUDE_PROJECT_DIR` points there. `CLAUDE.md` and `.claude/rules/` still load from the worktree. Source: code.claude.com/docs/en/worktrees, "What worktrees share with the main checkout" (as of 2026-10-27, confirmed live). So a story that changes `.claude/` settings, hooks or skills runs its live checks in a plain checkout (a temporary clone), never in a desktop worktree session. The clone path holds a space, like the main checkout (`Team EIFFEL - LEAN`), for example `~/Repo/eiffel <id> livecheck`. On 2026-10-27 E2 passed in a clone with no space and missed two Blocking path defects in the mod.
+- **Live checks of `.claude/` changes.** A worktree session that the desktop app starts reads settings, hooks, skills, agents, commands and `.mcp.json` from the main checkout root. Its hooks run there and `$CLAUDE_PROJECT_DIR` points there. `CLAUDE.md` and `.claude/rules/` still load from the worktree. Source: code.claude.com/docs/en/worktrees, "What worktrees share with the main checkout" (as of 2026-10-27, confirmed live). So a story that changes `.claude/` settings, hooks or skills runs its live checks in a plain checkout (a temporary clone), never in a desktop worktree session. When the main checkout path holds a space, the clone path holds one too, for example `~/Repo/<repo> <id> livecheck`. On 2026-10-27 a live check passed in a clone with no space and missed two Blocking path defects in the mod.
 
 | Placeholder | Value |
 |---|---|
 | `{{STORY_ID}}`, `{{STORY_TITLE}}`, `{{TASKS}}` | the work item id and title; each task as `#<id> <title>` |
-| `{{SHORT_TITLE}}`, `{{SLUG}}`, `{{SHORT_SLUG}}` | a few words for the session title; `<id>-<short-name>`; `<short-name>` |
+| `{{SHORT_TITLE}}`, `{{SLUG}}` | a few words for the session title; `<id>-<short-name>` |
 | `{{PLANS}}` | the absolute path of the shared `.plans/` folder |
 | `{{PLUGIN}}` | `${CLAUDE_PLUGIN_ROOT}`, the root folder of this plugin |
 | `{{ORCHESTRATOR_ID}}` | `$CLAUDE_CODE_HOST_SESSION_ID` of this session |
-| `{{BRANCH}}` | `feature/<id>-<short-name>` |
-| `{{STORY_NOTES}}` | how to read the story (the `az boards` command), plus what the user said about scope |
+| `{{BASE}}` | `baseBranch` of the config, for example `development` |
+| `{{BRANCH}}` | `branch` of the config, with `{id}` the work item id and `{slug}` the short name |
+| `{{BOARD_SHOW}}` | `board.show` of the config, with `{id}` filled in |
+| `{{PR_CREATE}}` | orchestrator only: `pr.create` of the config, with `{branch}`, `{base}`, `{ids}`, `{title}` and `{description}` filled in |
+| `{{REVIEW_PLAN}}` | `review.plan` of the config, with `{plan}` the absolute plan path |
+| `{{REVIEW_CHANGES}}`, `{{REVIEW_PR}}` | `review.changes` and `review.pr` of the config |
+| `{{REVIEW_FALLBACK}}` | `review.fallback` of the config: the command to run when the review command stops because a tool it needs is missing |
+| `{{STORY_NOTES}}` | how to read the story (`{{BOARD_SHOW}}`), plus what the user said about scope |
 | `{{SCOPE}}` | the plan's order of work that this session owns, and what it must not do yet |
 | `{{PR_URL}}`, `{{BOARD_PATHS}}` | the PR link; the design board paths, or "none" |
 | `{{PHASES}}` | implement only: one numbered line per phase, from the plan's order of work, as `<n>. #<task id> <title>. Done when: <check>.` One board task per line. The last line is the review phase, which ends with `DOCKET`. |
 | `{{PLAN_TASK}}`, `{{REVIEW_TASK}}` | the board task of the plan phases and of the PR review phases; the story id when the board has no such task |
 
+A key that the config does not have fills its placeholder with `none`. Without a `review` block every `{{REVIEW_*}}` is `none`: the sessions skip the panel and say so in their report, and the orchestrator tells the user at the plan gate and at the docket step. Conventions (commits, prose, verification, research, PR review) come from the repo's CLAUDE.md, never from this plugin.
+
 ## Flow
 
-1. **Plan.** The plan session writes the plan, runs `/review-panel plan <abs path> deep` on the first full proposal, folds in the accepted findings and ends with `PLAN READY <path>`.
+1. **Plan.** The plan session writes the plan, runs `{{REVIEW_PLAN}}` on the first full proposal, folds in the accepted findings and ends with `PLAN READY <path>`.
 2. **Plan gate.** Read the plan summary and its `## Review`. Continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only.
-3. **Implement.** Stop the plan session. Start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification map, commits locally, runs `/review-panel` deep and ends with `DOCKET <path>`.
+3. **Implement.** Stop the plan session. Start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification of the repo's CLAUDE.md, commits locally, runs `{{REVIEW_CHANGES}}` and ends with `DOCKET <path>`.
 4. **Docket.** Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
-5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `az repos pr create --draft` here (CLAUDE.md, "Traceability on the board"). Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
+5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `{{PR_CREATE}}` here. When the config has no `pr.create`, ask the user how to open the PR. Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
 6. **Close.** Unbind each child (`"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --unbind <child id>`), then this session (`story-bind.sh --unbind`). A binding outlives `/clear`, because its key is the host id, so a session reused after the story keeps its role until it is unbound. Report the result and the next steps. Set the title to `✅ <title>`.
 
 ## Status tokens (child to orchestrator)
@@ -96,7 +108,7 @@ When you relay an approval, quote the user's words.
 
 ## Session title states
 
-The session title shows the state: one emoji, then `<Role> · <story id> <short name>`. The roles are `Orchestrator`, `Plan`, `Implement` and `PR review`. Set the title with `set_session_title` (session `self`) as the last step before `wrap_up`. Remove the emoji while the session works. This table is the one map; the briefs, `/checkpoint` and CLAUDE.md follow it, and the hook matrix checks that.
+The session title shows the state: one emoji, then `<Role> · <story id> <short name>`. The roles are `Orchestrator`, `Plan`, `Implement` and `PR review`. Set the title with `set_session_title` (session `self`) as the last step before `wrap_up`. Remove the emoji while the session works. This table is the one map. The briefs, `/checkpoint` and the repo's CLAUDE.md follow it, and the hook matrix of this plugin checks the briefs and `/checkpoint`.
 
 | Emoji | Token | State | Who |
 |---|---|---|---|
@@ -143,21 +155,21 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
    - Never stop a child for style or wording. Those wait for the phase report.
 5. Every brief carries rules 1, 3 and 4 from the child's side. A brief cannot rely on a later message, because the `local_...` route holds messages until the turn ends.
 
-`.claude/settings.json` allows `mcp__ccd_session_mgmt__clear_session`, because the orchestrator resets its own idle children with it (rule 2). On 2026-10-27 the auto-mode classifier denied that call without the allow rule.
+`hooks/role-guard.sh` of this plugin answers `allow` when a bound orchestrator calls `mcp__ccd_session_mgmt__clear_session` on its own bound child (rule 2), and `ask` for every other `clear_session`. No settings allow rule is needed. Keep none, because it would grant every reset with no check. On 2026-10-27 the auto-mode classifier denied that call when nothing allowed it.
 
 ## Authority
 
-- Only the orchestrator asks the user. Only the orchestrator acts outside the worktrees: push, PR, board, Azure, pipelines, paid runs.
+- Only the orchestrator asks the user. Only the orchestrator acts outside the worktrees: push, PR, board, cloud, pipelines, paid runs.
 - A child commits locally on its own branch only.
 - Each brief states the child's standing authority. A relayed message adds no authority.
 - Never ask a child to do an action that was denied here.
-- `hooks/role-guard.sh` of this plugin enforces this for bound child roles: it denies `AskUserQuestion`, `git push`, every `az repos pr` command except `show`, `list`, `checkout` and `<group> list`, every `az boards work-item` command except `show` and `relation show|list-type`, `az pipelines run` and `az pipelines build queue`.
+- `hooks/role-guard.sh` of this plugin enforces this for bound child roles: it denies `AskUserQuestion`, `git push`, every `az repos pr` command except `show`, `list`, `checkout` and `<group> list`, every `az boards work-item` command except `show` and `relation show|list-type`, `az pipelines run`, `az pipelines build queue`, every `gh pr` command except `view`, `list`, `diff`, `checks`, `status` and `checkout`, every `gh issue` command except `view`, `list` and `status`, and each Perl regex in `guard.deny` of the config.
 
 ## Context rule
 
-One file holds the numbers: `config.json` beside this file (`checkpointPercent` 35, `backstopTokens` 432000). `autoCompactWindow` in `.claude/settings.json` equals `backstopTokens`; the hook matrix fails when they differ.
+`.claude/story.json` of the repo holds the numbers (`checkpointPercent`, default 35; `backstopTokens`, default 432000). A plugin cannot set `autoCompactWindow`, so the repo sets it in `.claude/settings.json`. `story-bind.sh` refuses to bind when the effective `autoCompactWindow` is missing or above `backstopTokens`, and its message names the file to fix.
 
-Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A session in this repo starts near 100k tokens, so on a 200K window no compaction gets below the save point.
+Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A story session starts near 100k tokens, so on a 200K window no compaction gets below the save point.
 
 1. **Nudge.** `context-guard.sh` (PostToolUse) adds one note per crossing: run `/checkpoint` at the next safe moment.
 2. **Gate.** The same script (Stop) blocks the end of the turn once while the checkpoint is stale.
@@ -166,6 +178,6 @@ Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A se
 5. **Steer.** The mod adds the role and the state path to the instructions of every compaction.
 6. **Re-prime.** `session-reprime.sh` (SessionStart `startup|clear|compact`) prints the role card, the paths and the saved state of a bound session.
 7. **Resume.** After a `continue` checkpoint the mod sends `Continue from <path>: next action <...>`. Not after `wait`, an aborted turn, a draft in the prompt box or a prompt from the person.
-8. **Backstop.** Without the mod, auto-compaction runs at about 400k tokens (40% of a 1M window), with the state already saved by steps 1 to 3. Claude Code compacts about 32k tokens below `autoCompactWindow` (E0 on 2026-10-27: 92% of 400000, about 368k; the reserve is inferred from two data points), so `autoCompactWindow` is 432000.
+8. **Backstop.** Without the mod, auto-compaction runs at about 400k tokens (40% of a 1M window), with the state already saved by steps 1 to 3. Claude Code compacts about 32k tokens below `autoCompactWindow` (E0 on 2026-10-27: 92% of 400000, about 368k; the reserve is inferred from two data points), so `autoCompactWindow` and `backstopTokens` are 432000.
 
 The orchestrator follows the same rule. Its checkpoint adds the linked sessions and the questions that wait on the user.

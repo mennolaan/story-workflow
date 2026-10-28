@@ -6,7 +6,7 @@ The orchestrator is the only writer. Newest entries first in each section.
 
 - Work item: #{{STORY_ID}} {{STORY_TITLE}}
 - Tasks: {{TASKS}}
-- Branch: feature/{{STORY_ID}}-{{SHORT_SLUG}}
+- Branch: {{BRANCH}}
 - Plan: {{PLANS}}/{{SLUG}}.md
 
 ## Phase

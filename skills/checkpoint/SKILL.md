@@ -7,6 +7,10 @@ description: Save this session's state to its checkpoint file, so a compaction o
 
 Save the state of this session while you still hold the context. No hook can make you write it later.
 
+## 0. Check the repo
+
+Run step 1. When `story-bind.sh` exits 1, stop: show its message and write no file. It names `.claude/story.json` and `story.example.json`, because the story workflow is off in a repo without that file.
+
 ## 1. Find the target
 
 ```bash

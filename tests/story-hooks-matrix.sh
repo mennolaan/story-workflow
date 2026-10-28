@@ -184,6 +184,13 @@ hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","ses
 bind local_host2 plan story-c
 hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"new-after-clear"}' CLAUDE_CODE_HOST_SESSION_ID=local_host2; o="${out}"
 [[ "${o}" == *"PLAN session of story story-c"* && "${o}" == *"No saved state yet"* ]] && pass "reprime: the host id binding survives a new session_id" || fail "reprime: host id binding not used" "${o}"
+printf '{"review": {"plan": "/review-x plan {plan} deep"}}\n' >"${tmp}/review.json"
+hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"new-after-clear"}' CLAUDE_CODE_HOST_SESSION_ID=local_host2 STORY_CONFIG="${tmp}/review.json"
+[[ "${out}" == *"Run /review-x plan ${plans}/story-c.md deep on the first full proposal"* ]] \
+  && pass "reprime: the plan card names review.plan of the config, with the plan path" || fail "reprime: the plan card does not use review.plan" "${out}"
+hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"new-after-clear"}' CLAUDE_CODE_HOST_SESSION_ID=local_host2
+[[ "${out}" == *"no review command"*"skip the panel"* && "${out}" != *review-panel* ]] \
+  && pass "reprime: without a review block the plan card says to skip the panel" || fail "reprime: the plan card without a review block" "${out}"
 bind s-orch orchestrator story-c
 hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"startup","session_id":"s-orch"}'; o="${out}"
 [[ "${o}" == *ORCHESTRATOR* && "${o}" == *ledger.md* && "${o}" != *"Protocol:"* ]] && pass "reprime: the orchestrator gets its card and the ledger, no child protocol" || fail "reprime: orchestrator output wrong" "${o}"
@@ -444,6 +451,34 @@ awk '/^\{\{PHASES\}\}$/ { print "1. #578 Hooks. Done when: the matrix is green."
 phase_check "${tmp}/filled.md" >"${tmp}/phase.out" && pass "phases: a filled implement brief passes" || fail "phases: a filled implement brief failed" "$(cat "${tmp}/phase.out")"
 grep -q '^## Phased turns and steering$' "${story}/SKILL.md" && grep -q 'stop_session' "${story}/SKILL.md" \
   && pass "phases: /story carries the phased-turn rules" || fail "phases: /story has no phased-turn rules"
+
+# 4h. repo facts come from .claude/story.json, never from the plugin text
+placeholders_missing() { # placeholders_missing <map file> <file>...: prints each {{X}} a file uses that the map does not document
+  local map="$1"; shift
+  grep -ho '{{[A-Z_]*}}' "$@" | sort -u | while IFS= read -r x; do grep -qF "\`${x}\`" "${map}" || printf 'undocumented %s\n' "${x}"; done
+}
+o="$(placeholders_missing "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md")"
+[ -z "${o}" ] && pass "placeholders: every placeholder of the briefs and the ledger is documented in /story" || fail "placeholders: undocumented" "${o}"
+printf 'Run {{REVIEW_NOPE}}.\n' >"${tmp}/nope.md"
+[ -n "$(placeholders_missing "${story}/SKILL.md" "${tmp}/nope.md")" ] && pass "placeholders: an undocumented placeholder fails" || fail "placeholders: an undocumented placeholder passed"
+review_skip_missing() { # review_skip_missing <brief>...: prints each review placeholder without its skip rule
+  local f
+  for f in "$@"; do
+    grep -oE '\{\{REVIEW_(PLAN|CHANGES|PR)\}\}' "${f}" | sort -u | while IFS= read -r x; do
+      grep -qF "When \`${x}\` is \`none\`, skip the panel" "${f}" || printf '%s: %s has no skip rule\n' "$(basename "${f}")" "${x}"
+    done
+  done
+}
+o="$(review_skip_missing "${story}"/briefs/*.md)"
+n="$(grep -l '{{REVIEW_\(PLAN\|CHANGES\|PR\)}}' "${story}"/briefs/*.md | wc -l | tr -d ' ')"
+[ -z "${o}" ] && [ "${n}" -eq 3 ] && pass "review: each brief runs its review placeholder and skips the panel without a review block" || fail "review: a brief lacks its review placeholder or its skip rule (${n} briefs)" "${o}"
+grep -v 'skip the panel' "${story}/briefs/plan.md" >"${tmp}/no-skip.md"
+[ -n "$(review_skip_missing "${tmp}/no-skip.md")" ] && pass "review: a brief without the skip rule fails" || fail "review: a brief without the skip rule passed"
+repo_facts() { grep -n -E 'tme-lean|origin/development|az repos pr create|Team EIFFEL|/review-panel|/review-grok|feature/<id>' "$@"; }
+o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${repo}/skills/checkpoint/SKILL.md" "${hooks}"/*.sh)"
+[ -z "${o}" ] && pass "repo facts: no skill, brief or hook names the facts of one repo" || fail "repo facts: found" "${o}"
+printf 'git merge-base --is-ancestor origin/development HEAD\n' >"${tmp}/fact.md"
+[ -n "$(repo_facts "${tmp}/fact.md")" ] && pass "repo facts: origin/development in a brief fails" || fail "repo facts: origin/development passed"
 
 # 5. pre-compact and post-compact
 bind s-pc implement story-p

@@ -59,6 +59,9 @@ story_plan_boundary() {
   story_enabled && [ "$(jq -r '.planBoundary == true' "$(story_config_file)" 2>/dev/null)" = true ]
 }
 
+# story_config_text <jq path>: a string value of the config, or nothing.
+story_config_text() { jq -r "$1 // empty | strings" "$(story_config_file)" 2>/dev/null; }
+
 # story_config <key> <default>
 story_config() {
   local v
@@ -171,14 +174,22 @@ story_is_fresh() {
   [ "$(story_mtime "$1")" -ge "${2:-0}" ]
 }
 
-# story_card <role> <slug> <parent>: the role card that re-primes a session.
+# story_card <role> <slug> <parent> <plan path>: the role card that re-primes a
+# session. The plan review command is review.plan of the config, with {plan}
+# filled in.
 story_card() {
-  local role="$1" slug="$2" parent="${3:-unknown}"
+  local role="$1" slug="$2" parent="${3:-unknown}" plan="${4:-the plan}" review
   case "${role}" in
     orchestrator)
-      printf 'You are the ORCHESTRATOR of story %s. You alone ask the user and act outward (board, push, PR, Azure, pipelines, paid runs). Read digests, not diffs. Keep the ledger current.\n' "${slug}" ;;
+      printf 'You are the ORCHESTRATOR of story %s. You alone ask the user and act outward (board, push, PR, cloud, pipelines, paid runs). Read digests, not diffs. Keep the ledger current.\n' "${slug}" ;;
     plan)
-      printf 'You are the PLAN session of story %s. You never ask the user. You own the plan file. Run /review-panel plan <plan> deep on the first full proposal, fold in the findings, then report PLAN READY. Your orchestrator is %s.\n' "${slug}" "${parent}" ;;
+      review="$(story_config_text .review.plan)"
+      if [ -n "${review}" ]; then
+        review="Run ${review//\{plan\}/${plan}} on the first full proposal, fold in the findings"
+      else
+        review="The repo config has no review command, so skip the panel and say so in the plan"
+      fi
+      printf 'You are the PLAN session of story %s. You never ask the user. You own the plan file. %s, then report PLAN READY. Your orchestrator is %s.\n' "${slug}" "${review}" "${parent}" ;;
     implement)
       printf 'You are the IMPLEMENT session of story %s. You never ask the user and never push. You own the code, local commits and "## Implementation status" in the plan. Your orchestrator is %s.\n' "${slug}" "${parent}" ;;
     pr-review)

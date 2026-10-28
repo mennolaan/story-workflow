@@ -31,7 +31,7 @@ slug="$(story_field "${b}" slug)"
 parent="$(story_field "${b}" parent)"
 state="${dir}/${slug}.d/${role}.md"
 
-story_card "${role}" "${slug}" "${parent}"
+story_card "${role}" "${slug}" "${parent}" "${dir}/${slug}.md"
 printf 'Plan: %s/%s.md\n' "${dir}" "${slug}"
 printf 'Ledger: %s/%s.d/ledger.md\n' "${dir}" "${slug}"
 printf 'State: %s\n' "${state}"
