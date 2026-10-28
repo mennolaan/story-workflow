@@ -8,7 +8,13 @@
 #   az repos pr, every command except show, list, checkout and <group> list
 #   az boards work-item, every command except show and relation show|list-type
 #   az pipelines run, az pipelines build queue
-# in Bash and in mcp__terminal__run_in_terminal (the user's own shell).
+#   gh pr, every command except view, list, diff, checks, status and checkout
+#   gh issue, every command except view, list and status
+#   each Perl regex in "guard.deny" of .claude/story.json, matched with /m on
+#   the same cleaned command as the rules above
+# in Bash and in mcp__terminal__run_in_terminal (the user's own shell). A
+# guard.deny value that is not a list of strings, or an entry that is not a
+# valid regex, exits 1 with the reason.
 # Without .claude/story.json every call passes with no output (story_enabled).
 # The orchestrator and unbound sessions pass. Heredoc bodies and quoted
 # strings are removed before the match, so a commit message or a notes file
@@ -85,8 +91,11 @@ esac
 
 cmd="$(jq -r '.tool_input.command // empty' <<<"${input}")"
 [ -n "${cmd}" ] || exit 0
+config="$(story_config_file)"
+extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.deny is not a list of strings") end' "${config}" 2>&1)" \
+  || { echo "role-guard: guard.deny in ${config} must be a list of regex strings, so the guard did not run: ${extra}" >&2; exit 1; }
 
-hit="$(printf '%s' "${cmd}" | perl -e '
+hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" perl -e '
   local $/; my $s = <STDIN>;
   my @out; my $delim; my $dash; my $keep;
   for my $line (split /\n/, $s, -1) {
@@ -117,10 +126,23 @@ hit="$(printf '%s' "${cmd}" | perl -e '
     [qr/${b}az\s+boards\s+work-item\s+(?!show\b|relation\s+(?:show|list-type)\b)([a-z][a-z-]*(?:\s+[a-z][a-z-]*)?)/, "az boards work-item"],
     [qr/${b}az\s+pipelines\s+run\b/, "az pipelines run"],
     [qr/${b}az\s+pipelines\s+build\s+queue\b/, "az pipelines build queue"],
+    [qr/${b}gh\s+pr\s+(?!(?:view|list|diff|checks|status|checkout)\b)([a-z][a-z-]*)/, "gh pr"],
+    [qr/${b}gh\s+issue\s+(?!(?:view|list|status)\b)([a-z][a-z-]*)/, "gh issue"],
   );
   for my $r (@rules) {
-    if ($s =~ $r->[0]) { my $x = $1 // ""; print $r->[1] . ($x ne "" ? " $x" : ""); exit 0; }
+    if ($s =~ $r->[0]) { my $x = $1 // ""; print "run " . $r->[1] . ($x ne "" ? " $x" : ""); exit 0; }
+  }
+  for my $re (grep { length } split /\n/, ($ENV{STORY_GUARD_DENY} // "")) {
+    my $q = eval { qr/$re/m };
+    if (!defined $q) { (my $e = $@) =~ s/ at -e line .*//s; print "BAD\t$re\t$e"; exit 0; }
+    if ($s =~ $q) { print "run a command that matches the guard.deny entry $re"; exit 0; }
   }
 ')"
-[ -n "${hit}" ] && deny "run ${hit}"
+case "${hit}" in
+  BAD$'\t'*)
+    IFS=$'\t' read -r _ re why <<<"${hit}"
+    echo "role-guard: the guard.deny entry '${re}' in ${config} is not a valid Perl regex (${why}), so the guard did not run. Fix the entry." >&2
+    exit 1 ;;
+esac
+[ -n "${hit}" ] && deny "${hit}"
 exit 0

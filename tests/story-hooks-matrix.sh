@@ -224,6 +224,21 @@ cmds=(
   "Bash|bash -s \"\$(git push origin HEAD)\" <<< 'true'"
   "Bash|bash -s \"\$(git push origin HEAD)\" <<< \"true\""
   "Bash|bash -s \$(git push origin HEAD) <<< 'true'"
+  "Bash|gh pr create --draft --title x --body y"
+  "Bash|gh pr merge 5 --squash"
+  "Bash|gh pr close 5"
+  "Bash|gh pr edit 5 --title x"
+  "Bash|gh pr comment 5 --body x"
+  "Bash|gh pr review 5 --approve"
+  "Bash|gh pr ready 5"
+  "Bash|gh pr reopen 5"
+  "Bash|gh issue create --title x"
+  "Bash|gh issue close 5"
+  "Bash|gh issue edit 5 --add-label x"
+  "Bash|gh issue comment 5 --body x"
+  "Bash|gh issue reopen 5"
+  "Bash|gh issue delete 5 --yes"
+  "Bash|cd x && /opt/homebrew/bin/gh pr create"
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \
@@ -256,6 +271,30 @@ hook role-guard.sh "$(guard_in g-implement Bash "${subst}")"; [[ "${out}" == *de
 for c in "git status" "git commit -m x" "az repos pr show --id 5" "az repos pr list" "az repos pr reviewer list --id 5" "az boards work-item show --id 577" "az boards work-item relation show --id 5" "git log --oneline"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
+for c in "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
+  hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
+done
+# 4g. guard.deny: Perl regexes from the config, matched like the built-in rules
+printf '{"guard": {"deny": ["\\\\bterraform\\\\s+apply\\\\b", "^make deploy"]}}\n' >"${tmp}/guard.json"
+hook role-guard.sh "$(guard_in g-implement Bash "cd infra && terraform apply -auto-approve")" STORY_CONFIG="${tmp}/guard.json"
+[[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *guard.deny* ]] && pass "guard.deny: a child is denied a command that matches an entry" || fail "guard.deny: entry did not deny" "${out}"
+hook role-guard.sh "$(guard_in g-plan Bash "make deploy ENV=dev")" STORY_CONFIG="${tmp}/guard.json"
+[[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "guard.deny: a second entry denies too" || fail "guard.deny: second entry did not deny" "${out}"
+for c in "terraform plan" "git commit -m 'terraform apply later'" "make test"; do
+  hook role-guard.sh "$(guard_in g-implement Bash "${c}")" STORY_CONFIG="${tmp}/guard.json"
+  [ -z "${out}" ] && pass "guard.deny: a child may run ${c}" || fail "guard.deny: false positive on ${c}" "${out}"
+done
+hook role-guard.sh "$(guard_in g-implement Bash "git push")" STORY_CONFIG="${tmp}/guard.json"
+[[ "${out}" == *deny* ]] && pass "guard.deny: the built-in list still applies" || fail "guard.deny: the built-in list was replaced" "${out}"
+hook role-guard.sh "$(guard_in g-orchestrator Bash "terraform apply")" STORY_CONFIG="${tmp}/guard.json"
+[ -z "${out}" ] && pass "guard.deny: the orchestrator passes" || fail "guard.deny: the orchestrator was denied" "${out}"
+printf '{"guard": {"deny": ["(unclosed"]}}\n' >"${tmp}/guard-bad.json"
+hook role-guard.sh "$(guard_in g-implement Bash "ls")" STORY_CONFIG="${tmp}/guard-bad.json"
+[ "${code}" -eq 1 ] && grep -q 'guard.deny' "${tmp}/stderr" && grep -qF '(unclosed' "${tmp}/stderr" \
+  && pass "guard.deny: a bad regex fails loud (exit 1) and names the entry" || fail "guard.deny: bad regex exit ${code}" "$(cat "${tmp}/stderr")"
+printf '{"guard": {"deny": "terraform"}}\n' >"${tmp}/guard-str.json"
+hook role-guard.sh "$(guard_in g-implement Bash "ls")" STORY_CONFIG="${tmp}/guard-str.json"
+[ "${code}" -eq 1 ] && grep -q 'guard.deny' "${tmp}/stderr" && pass "guard.deny: a value that is not a list fails loud" || fail "guard.deny: non-list exit ${code}" "$(cat "${tmp}/stderr")"
 hook role-guard.sh "$(guard_in g-implement Bash "python3 -c 'print(1)' && git status")"; [ -z "${out}" ] && pass "role-guard: a quoted -c script without a push passes" || fail "role-guard: false positive on python3 -c" "${out}"
 for c in "git commit -m 'git push later'" "echo 'bash -c git push'" $'git commit -F - <<\'EOF\'\ndocs: git push stays with the orchestrator\nEOF' "echo 'git push' | grep -c push" "echo 'git push' | shellcheck -"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
