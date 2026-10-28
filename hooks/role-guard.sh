@@ -32,21 +32,41 @@
 # gets "ask" (a prompt even in auto mode). No settings allow rule is needed,
 # and a repo should keep none: it would grant every reset with no check.
 # Deny is the JSON permissionDecision form (code.claude.com/docs/en/hooks,
-# as of 2026-10-27). Without jq, or on an input that is not JSON, it exits 1
-# with the reason: a non-blocking error the user sees. Without jq a
-# clear_session call gets a fixed "ask", so a leftover settings allow rule
-# cannot approve it with no check.
+# as of 2026-10-27). The guard fails closed for a bound child: without jq,
+# with a config it cannot read, or with a bad guard.deny entry, every call
+# of the child is denied with the reason. For other sessions, without jq or
+# on an input that is not JSON, it exits 1 with the reason: a non-blocking
+# error the user sees. Without jq a clear_session call gets a fixed "ask", so
+# a leftover settings allow rule cannot approve it with no check.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=story-lib.sh
 . "${here}/story-lib.sh"
 
+# nojq_child: the session is bound to a child role. Bash built-ins and grep
+# only, because it runs when jq is missing.
+nojq_child() {
+  local dir k sid=""
+  dir="$(story_plans_dir)" || return 1
+  [[ "${input}" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([A-Za-z0-9._-]*)\" ]] && sid="${BASH_REMATCH[1]}"
+  for k in "${CLAUDE_CODE_HOST_SESSION_ID//[^A-Za-z0-9._-]/}" "${sid}" "${CLAUDE_CODE_SESSION_ID//[^A-Za-z0-9._-]/}"; do
+    [ -n "${k}" ] && [ -f "${dir}/.sessions/${k}.json" ] || continue
+    grep -Eq '"role"[[:space:]]*:[[:space:]]*"(plan|implement|pr-review)"' "${dir}/.sessions/${k}.json"
+    return
+  done
+  return 1
+}
+
 input="$(cat)"
 story_enabled || exit 0
 if ! command -v jq >/dev/null 2>&1; then
   if grep -Eq '"tool_name"[[:space:]]*:[[:space:]]*"mcp__ccd_session_mgmt__clear_session"' <<<"${input}"; then
     printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"role-guard: jq is not on PATH, so the clear_session check did not run. Approve only the clear of your own idle child. Install jq (brew install jq)."}}'
+    exit 0
+  fi
+  if nojq_child; then
+    printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"role-guard: jq is not on PATH, so the guard cannot check a command of this bound child session, and denies it. Install jq (brew install jq)."}}'
     exit 0
   fi
   echo "role-guard: jq is not on PATH, so the guard did not run. Install it (brew install jq)." >&2
@@ -98,8 +118,9 @@ esac
 cmd="$(jq -r '.tool_input.command // empty' <<<"${input}")"
 [ -n "${cmd}" ] || exit 0
 config="$(story_config_file)"
+broken=""
 extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.deny is not a list of strings") end' "${config}" 2>&1)" \
-  || { echo "role-guard: guard.deny in ${config} must be a list of regex strings, so the guard did not run: ${extra}" >&2; exit 1; }
+  || { broken="${extra}"; extra=""; }
 
 hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" perl -e '
   local $/; my $s = <STDIN>;
@@ -151,8 +172,8 @@ hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" perl -e '
 case "${hit}" in
   BAD$'\t'*)
     IFS=$'\t' read -r _ re why <<<"${hit}"
-    echo "role-guard: the guard.deny entry '${re}' in ${config} is not a valid Perl regex (${why}), so the guard did not run. Fix the entry." >&2
-    exit 1 ;;
+    deny "run any command while the guard.deny entry '${re}' in ${config} is not a valid Perl regex (${why}). Ask the orchestrator to fix the entry" ;;
 esac
 [ -n "${hit}" ] && deny "${hit}"
+[ -n "${broken}" ] && deny "run any command while ${config} cannot be read as a list of guard.deny regex strings (${broken}). Ask the orchestrator to fix the file"
 exit 0

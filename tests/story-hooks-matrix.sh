@@ -308,11 +308,21 @@ hook role-guard.sh "$(guard_in g-orchestrator Bash "terraform apply")" STORY_CON
 [ -z "${out}" ] && pass "guard.deny: the orchestrator passes" || fail "guard.deny: the orchestrator was denied" "${out}"
 printf '{"guard": {"deny": ["(unclosed"]}}\n' >"${tmp}/guard-bad.json"
 hook role-guard.sh "$(guard_in g-implement Bash "ls")" STORY_CONFIG="${tmp}/guard-bad.json"
-[ "${code}" -eq 1 ] && grep -q 'guard.deny' "${tmp}/stderr" && grep -qF '(unclosed' "${tmp}/stderr" \
-  && pass "guard.deny: a bad regex fails loud (exit 1) and names the entry" || fail "guard.deny: bad regex exit ${code}" "$(cat "${tmp}/stderr")"
+[[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *'(unclosed'* ]] \
+  && pass "guard.deny: a bad regex denies the child (fail closed) and names the entry" || fail "guard.deny: bad regex did not deny" "code ${code}, out: ${out}"
+# 4i. a config the guard cannot read denies every call of a bound child (fail closed)
 printf '{"guard": {"deny": "terraform"}}\n' >"${tmp}/guard-str.json"
-hook role-guard.sh "$(guard_in g-implement Bash "ls")" STORY_CONFIG="${tmp}/guard-str.json"
-[ "${code}" -eq 1 ] && grep -q 'guard.deny' "${tmp}/stderr" && pass "guard.deny: a value that is not a list fails loud" || fail "guard.deny: non-list exit ${code}" "$(cat "${tmp}/stderr")"
+printf '{"guard": {"deny": ["x"],}}\n' >"${tmp}/guard-broken.json"
+printf '{"guard": "x"}\n' >"${tmp}/guard-obj.json"
+for f in guard-str guard-broken guard-obj; do
+  for c in "git push" "ls"; do
+    hook role-guard.sh "$(guard_in g-implement Bash "${c}")" STORY_CONFIG="${tmp}/${f}.json"
+    [[ "${out}" == *'"permissionDecision":"deny"'* && ( "${out}" == *"${tmp}/${f}.json"* || "${out}" == *"run git push"* ) ]] \
+      && pass "role-guard: ${f}.json denies the child ${c}" || fail "role-guard: ${f}.json let the child run ${c}" "code ${code}, out: ${out}"
+  done
+  hook role-guard.sh "$(guard_in g-orchestrator Bash "ls")" STORY_CONFIG="${tmp}/${f}.json"
+  [ -z "${out}" ] && pass "role-guard: ${f}.json leaves the orchestrator alone" || fail "role-guard: ${f}.json blocked the orchestrator" "${out}"
+done
 hook role-guard.sh "$(guard_in g-implement Bash "python3 -c 'print(1)' && git status")"; [ -z "${out}" ] && pass "role-guard: a quoted -c script without a push passes" || fail "role-guard: false positive on python3 -c" "${out}"
 for c in "git commit -m 'git push later'" "echo 'bash -c git push'" $'git commit -F - <<\'EOF\'\ndocs: git push stays with the orchestrator\nEOF' "echo 'git push' | grep -c push" "echo 'git push' | shellcheck -"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
@@ -524,9 +534,14 @@ hook context-guard.sh "$(ptu s-nojq "${t}")" PATH="${tmp}/nojq"
 hook context-guard.sh "$(stop s-nojq "${t}")" PATH="${tmp}/nojq"
 [ "${code}" -eq 0 ] && [ "$(jq -r '.systemMessage // empty' <<<"${out}" 2>/dev/null)" != "" ] && [[ "${out}" == *'jq is not on PATH'* ]] \
   && pass "guard: without jq Stop prints a systemMessage for the user" || fail "guard: without jq Stop printed no systemMessage" "code ${code}, out: ${out}"
-hook role-guard.sh "$(guard_in g-implement Bash 'git push')" PATH="${tmp}/nojq"
-[ "${code}" -eq 1 ] && grep -q 'jq is not on PATH' "${tmp}/stderr" \
-  && pass "role-guard: without jq it names jq and exits 1" || fail "role-guard: without jq the reason is wrong" "code ${code}, stderr: $(cat "${tmp}/stderr")"
+for c in "git push" "ls"; do
+  hook role-guard.sh "$(guard_in g-implement Bash "${c}")" PATH="${tmp}/nojq"
+  [ "${code}" -eq 0 ] && [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *'jq is not on PATH'* ]] \
+    && pass "role-guard: without jq a bound child is denied ${c} (fail closed)" || fail "role-guard: without jq a bound child ran ${c}" "code ${code}, out: ${out}"
+done
+hook role-guard.sh "$(guard_in g-unbound Bash 'git push')" PATH="${tmp}/nojq"
+[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'jq is not on PATH' "${tmp}/stderr" \
+  && pass "role-guard: without jq an unbound session gets the jq message and exit 1" || fail "role-guard: without jq the unbound reason is wrong" "code ${code}, out: ${out}, stderr: $(cat "${tmp}/stderr")"
 hook role-guard.sh "$(guard_in g-implement mcp__ccd_session_mgmt__clear_session g-other)" PATH="${tmp}/nojq"
 [ "${code}" -eq 0 ] && [[ "${out}" == *'"permissionDecision":"ask"'* ]] && [[ "${out}" == *'jq is not on PATH'* ]] \
   && pass "role-guard: without jq a clear_session asks" || fail "role-guard: without jq a clear_session passed with no decision" "code ${code}, out: ${out}"
