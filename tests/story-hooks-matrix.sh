@@ -620,6 +620,8 @@ bs "a project modelSettings window \"auto\" in the same file" refuse
 printf '{"autoCompactWindow": 432000}\n' >"${proj_s}"
 bs "CLAUDE_CODE_AUTO_COMPACT_WINDOW 1M over project 432000" refuse CLAUDE_CODE_AUTO_COMPACT_WINDOW=1M
 bs "CLAUDE_CODE_AUTO_COMPACT_WINDOW 400k" bind CLAUDE_CODE_AUTO_COMPACT_WINDOW=400k
+bs "a CLAUDE_CODE_AUTO_COMPACT_WINDOW of 19 digits that wraps a bash integer counts as the 1M maximum" refuse CLAUDE_CODE_AUTO_COMPACT_WINDOW=9223372036854775808
+bs "a CLAUDE_CODE_AUTO_COMPACT_WINDOW under 100000 counts as the 100k minimum" bind CLAUDE_CODE_AUTO_COMPACT_WINDOW=200
 bs "a CLAUDE_CODE_AUTO_COMPACT_WINDOW that is no size falls back to the files" bind CLAUDE_CODE_AUTO_COMPACT_WINDOW=lots
 mkdir -p "${tmp}/cfgdir"
 printf '{"autoCompactWindow": 1000000}\n' >"${tmp}/cfgdir/settings.json"

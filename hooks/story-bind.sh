@@ -91,12 +91,16 @@ managed_json() {
 
 # env_window: CLAUDE_CODE_AUTO_COMPACT_WINDOW as tokens, or exit 1 when Claude Code would ignore it.
 env_window() {
-  local v="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" n
-  if [[ "${v}" =~ ^([0-9]+)$ ]]; then n=$((10#${BASH_REMATCH[1]}))
-  elif [[ "${v}" =~ ^([0-9]+)[kK]$ ]]; then n=$((10#${BASH_REMATCH[1]} * 1000))
-  elif [[ "${v}" =~ ^([0-9]+)M$ ]]; then n=$((10#${BASH_REMATCH[1]} * 1000000))
+  local v="${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" n d unit
+  if [[ "${v}" =~ ^([0-9]+)$ ]]; then unit=1
+  elif [[ "${v}" =~ ^([0-9]+)[kK]$ ]]; then unit=1000
+  elif [[ "${v}" =~ ^([0-9]+)M$ ]]; then unit=1000000
   else return 1
   fi
+  d="${BASH_REMATCH[1]}"
+  # More than 7 digits is over the 1M maximum in every unit, and a long number would wrap the bash integer.
+  d="$(printf '%s' "${d}" | sed 's/^0*//')"
+  if [ "${#d}" -gt 7 ]; then n=1000000; else n=$(( ${d:-0} * unit )); fi
   [ "${n}" -lt 100000 ] && n=100000
   [ "${n}" -gt 1000000 ] && n=1000000
   printf '%s\n' "${n}"
