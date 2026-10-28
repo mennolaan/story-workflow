@@ -53,7 +53,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 
 - `start_session` with `context: "fresh"`, its own worktree, `model: "claude-opus-5-5"`, effort `high`.
 - The brief is the matching file in `briefs/`, with every `{{...}}` filled in. The orchestrator id is `$CLAUDE_CODE_HOST_SESSION_ID` in this session.
-- Record the child (name, id, role, state) in the ledger at once.
+- Record the child (name, id, role, state) in the ledger at once. Then run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --adopt <child id>`. The guard resets only an adopted child with `clear_session` and no prompt.
 - **Unpushed branch.** `start_session` with `source_branch` cuts the worktree from `origin/<branch>` when that remote ref exists (live check, 2026-10-27). Before you start a session from a feature branch with unpushed commits, give a local-only branch (no remote ref) as `source_branch`, or push first after the user's go.
 - **Live checks of `.claude/` changes.** A worktree session that the desktop app starts reads settings, hooks, skills, agents, commands and `.mcp.json` from the main checkout root. Its hooks run there and `$CLAUDE_PROJECT_DIR` points there. `CLAUDE.md` and `.claude/rules/` still load from the worktree. Source: code.claude.com/docs/en/worktrees, "What worktrees share with the main checkout" (as of 2026-10-27, confirmed live). So a story that changes `.claude/` settings, hooks or skills runs its live checks in a plain checkout (a temporary clone), never in a desktop worktree session. When the main checkout path holds a space, the clone path holds one too, for example `~/Repo/<repo> <id> livecheck`. On 2026-10-27 a live check passed in a clone with no space and missed two Blocking path defects in the mod.
 

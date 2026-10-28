@@ -35,8 +35,10 @@
 # Without .claude/story.json every call passes with no output (story_enabled).
 # The orchestrator and unbound sessions pass with no parsing.
 # mcp__ccd_session_mgmt__clear_session gets "allow" only for a bound
-# orchestrator whose target is bound with the orchestrator as its parent, so
-# the orchestrator resets its own idle child with no prompt. Every other call
+# orchestrator whose target the orchestrator adopted (story-bind.sh --adopt,
+# the children list of its binding), whose binding names the orchestrator as
+# parent and carries its own file key in "key". The orchestrator then resets
+# its own idle child with no prompt. A child caller gets deny. Every other call
 # gets "ask" (a prompt even in auto mode). No settings allow rule is needed,
 # and a repo should keep none: it would grant every reset with no check.
 # Deny is the JSON permissionDecision form (code.claude.com/docs/en/hooks,
@@ -104,7 +106,11 @@ if [ "${tool}" = mcp__ccd_session_mgmt__clear_session ]; then
   dir="$(story_plans_dir)" || ask "the shared .plans folder is not found"
   tb="${dir}/.sessions/${target}.json"
   [ -f "${tb}" ] || ask "the target is not bound to a story"
-  [ "$(story_field "${tb}" parent)" = "$(basename "${b}" .json)" ] || ask "the target is not a child of this orchestrator"
+  me_key="$(basename "${b}" .json)"
+  [ "$(story_field "${tb}" parent)" = "${me_key}" ] || ask "the target is not a child of this orchestrator"
+  [ "$(story_field "${tb}" key)" = "${target}" ] || ask "the binding of the target does not carry its own key, so it may be forged or old"
+  [ "$(jq -r --arg t "${target}" '(.children // []) | index($t) != null' "${b}" 2>/dev/null)" = true ] \
+    || ask "the orchestrator did not adopt the target (story-bind.sh --adopt ${target})"
   jq -cn --arg r "role-guard: the orchestrator resets its own bound child ${target}." \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'
   exit 0

@@ -14,12 +14,17 @@
 #                           unbind itself. Only a bound orchestrator unbinds
 #                           <key>, and only when that binding names it as
 #                           parent.
+#   story-bind.sh --adopt <child id>   a bound orchestrator records a child it
+#                           started in its own binding (children list), right
+#                           after start_session. role-guard.sh allows
+#                           clear_session only for an adopted child.
 #   story-bind.sh --check   check the repo config and print its path; binds
 #                           nothing (step 0 of /story)
 # Roles: orchestrator, plan, implement, pr-review.
 #
-# Writes <plans>/.sessions/<key>.json with role, slug, state, parent, bound_at
-# and session_id, and creates <plans>/<slug>.d/. A bound child binds again only
+# Writes <plans>/.sessions/<key>.json with role, slug, state, parent, bound_at,
+# session_id (the Claude Code id) and key (the file key, which is the desktop
+# host id when there is one; an orchestrator also gets children), and creates <plans>/<slug>.d/. A bound child binds again only
 # with the same role, story and parent. <plans> is the .plans/ folder
 # of the main checkout (story-lib.sh). Exit 1 with the reason on bad input.
 # Every mode exits 1 when the repo has no .claude/story.json or the file is not
@@ -199,6 +204,17 @@ if [ "${1:-}" = "--unbind" ]; then
   exit 0
 fi
 
+if [ "${1:-}" = "--adopt" ]; then
+  [ "${my_role}" = orchestrator ] \
+    || fail "only a bound orchestrator adopts a child, and this session is ${my_role:-unbound}. Run story-bind.sh orchestrator <slug> first."
+  [ -n "${2:-}" ] && [ "${2}" = "$(story_clean "${2}")" ] || fail "--adopt needs the session id of the child, with characters from A-Z a-z 0-9 . _ - only. Usage: story-bind.sh --adopt <child id>"
+  tmpf="$(mktemp "${me}.XXXXXX")" || fail "cannot write next to ${me}."
+  if ! jq --arg c "${2}" '.children = (((.children // []) + [$c]) | unique)' "${me}" >"${tmpf}"; then rm -f "${tmpf}"; fail "cannot update ${me}."; fi
+  mv "${tmpf}" "${me}" || fail "cannot replace ${me}."
+  printf 'Adopted %s as a child of %s.\n' "${2}" "${my_key}"
+  exit 0
+fi
+
 if [ "${1:-}" = "--show" ]; then
   b="$(story_binding '{}')"
   [ -n "${b}" ] || { printf 'unbound (key %s)\n' "${key}"; exit 0; }
@@ -229,10 +245,13 @@ backstop_gate
 
 mkdir -p "${dir}/.sessions" "${dir}/${slug}.d" || fail "cannot create ${dir}/.sessions or ${dir}/${slug}.d."
 file="${dir}/.sessions/${key}.json"
-jq -n --arg role "${role}" --arg slug "${slug}" --arg parent "${parent}" \
+children='[]'
+[ "${my_role}" = orchestrator ] && [ "${role}" = orchestrator ] && children="$(jq -c '.children // []' "${me}" 2>/dev/null || echo '[]')"
+jq -n --arg role "${role}" --arg slug "${slug}" --arg parent "${parent}" --arg key "${key}" \
   --arg sid "$(story_clean "${CLAUDE_CODE_SESSION_ID:-}")" \
-  --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{role:$role, slug:$slug, state:"active", parent:$parent, bound_at:$at, session_id:$sid}' >"${file}" \
+  --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson children "${children}" \
+  '{role:$role, slug:$slug, state:"active", parent:$parent, bound_at:$at, session_id:$sid, key:$key}
+   + (if $role == "orchestrator" then {children:$children} else {} end)' >"${file}" \
   || fail "cannot write ${file}."
 printf 'Bound %s as %s of story %s.\n' "${key}" "${role}" "${slug}"
 printf 'Binding: %s\n' "${file}"

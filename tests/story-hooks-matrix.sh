@@ -363,14 +363,24 @@ for c in "git commit -m 'git push later'" "echo 'bash -c git push'" $'git commit
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
 # 4f. clear_session: "allow" only for an orchestrator that clears its own bound
-# child, "ask" for every other call. No settings allow rule is assumed.
-printf '{"role":"implement","slug":"story-g","state":"active","parent":"g-orchestrator"}\n' >"${plans}/.sessions/g-child.json"
+# child, "ask" for every other call. No settings allow rule is assumed. The
+# child must be adopted (children list of the orchestrator), name the
+# orchestrator as parent, and carry its own file key in its binding.
+cb() { # cb <key> <parent> [key field]: a child binding
+  printf '{"role":"implement","slug":"story-g","state":"active","parent":"%s","session_id":"uuid-%s","key":"%s"}\n' "$2" "$1" "${3-$1}" >"${plans}/.sessions/$1.json"
+}
+cb g-child g-orchestrator
+cb g-notadopted g-orchestrator
+cb g-otherparent g-other-orch
+cb g-forged g-orchestrator g-someone-else
+printf '{"role":"implement","slug":"story-g","state":"active","parent":"g-orchestrator","session_id":"g-legacy"}\n' >"${plans}/.sessions/g-legacy.json"
+printf '{"role":"orchestrator","slug":"story-g","state":"active","parent":"","children":["g-child","g-otherparent","g-forged","g-legacy"]}\n' >"${plans}/.sessions/g-orchestrator.json"
 cs=mcp__ccd_session_mgmt__clear_session
 hook role-guard.sh "$(guard_in g-orchestrator "${cs}" g-child)"
 [[ "${out}" == *'"permissionDecision":"allow"'* ]] && [ "${code}" -eq 0 ] && pass "clear-gate: the orchestrator clears its own child with allow" || fail "clear-gate: own child not allowed" "${out}"
 hook role-guard.sh "$(guard_in g-implement "${cs}" g-child)"
 [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "clear-gate: a child caller gets deny" || fail "clear-gate: a child caller not denied" "${out}"
-for row in "g-orchestrator|g-plan|a target with another parent" "g-orchestrator|g-none|an unbound target" "g-orchestrator|self|self" "g-unbound|g-child|an unbound caller"; do
+for row in "g-orchestrator|g-notadopted|a bound child with the right parent that is not adopted" "g-orchestrator|g-otherparent|an adopted target whose binding names another parent" "g-orchestrator|g-forged|a binding whose key field differs from its file key" "g-orchestrator|g-legacy|a binding with no key field" "g-orchestrator|g-plan|a target with another parent" "g-orchestrator|g-none|an unbound target" "g-orchestrator|self|self" "g-unbound|g-child|an unbound caller"; do
   IFS='|' read -r caller target why <<<"${row}"
   hook role-guard.sh "$(guard_in "${caller}" "${cs}" "${target}")"
   [[ "${out}" == *'"permissionDecision":"ask"'* ]] && pass "clear-gate: ${why} gets ask" || fail "clear-gate: ${why} not asked" "${out}"
@@ -505,6 +515,8 @@ phase_check "${tmp}/no-stop.md" >/dev/null && fail "phases: a brief without stop
 awk '/^\{\{PHASES\}\}$/ { print "1. #578 Hooks. Done when: the matrix is green."; print "2. #582 Review. Done when: DOCKET."; next } { print }' \
   "${story}/briefs/implement.md" >"${tmp}/filled.md"
 phase_check "${tmp}/filled.md" >"${tmp}/phase.out" && pass "phases: a filled implement brief passes" || fail "phases: a filled implement brief failed" "$(cat "${tmp}/phase.out")"
+grep -q 'story-bind.sh\" --adopt <child id>' "${story}/SKILL.md" \
+  && pass "adopt: /story tells the orchestrator to adopt each child after start_session" || fail "adopt: /story does not mention story-bind.sh --adopt"
 grep -q '^## Phased turns and steering$' "${story}/SKILL.md" && grep -q 'stop_session' "${story}/SKILL.md" \
   && pass "phases: /story carries the phased-turn rules" || fail "phases: /story has no phased-turn rules"
 
@@ -658,6 +670,26 @@ o="$(sbx CLAUDE_CODE_SESSION_ID=k-child2 -- --unbind k-child 2>&1)"; c=$?
 [ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: a child cannot unbind a sibling" || fail "story-bind: a child unbound a sibling (exit ${c})" "${o}"
 o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- --unbind k-child 2>&1)"; c=$?
 [ "${c}" -eq 0 ] && [ ! -e "${plans}/.sessions/k-child.json" ] && pass "story-bind: the parent orchestrator unbinds its own child" || fail "story-bind: the parent could not unbind its child (exit ${c})" "${o}"
+# --adopt: only a bound orchestrator records a child, and the binding carries its key.
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- --adopt k-kid 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [ "$(jq -c '.children' "${plans}/.sessions/k-orch.json")" = '["k-kid"]' ] && pass "story-bind: --adopt records the child in the orchestrator's binding" || fail "story-bind: --adopt (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- --adopt k-kid 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [ "$(jq -c '.children' "${plans}/.sessions/k-orch.json")" = '["k-kid"]' ] && pass "story-bind: --adopt twice records the child once" || fail "story-bind: --adopt twice (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- orchestrator story-k 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [ "$(jq -c '.children' "${plans}/.sessions/k-orch.json")" = '["k-kid"]' ] && pass "story-bind: binding the orchestrator again keeps its children" || fail "story-bind: the children were lost on a second bind (exit ${c})" "${o}"
+for who in k-child2 k-free; do
+  o="$(sbx CLAUDE_CODE_SESSION_ID="${who}" -- --adopt k-kid 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [[ "${o}" == *"only a bound orchestrator adopts"* ]] && pass "story-bind: --adopt from ${who} exits 1" || fail "story-bind: --adopt from ${who} (exit ${c})" "${o}"
+done
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- --adopt 'bad id' 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && pass "story-bind: --adopt refuses an id with odd characters" || fail "story-bind: --adopt accepted a bad id (exit ${c})"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- --adopt 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && pass "story-bind: --adopt without an id exits 1" || fail "story-bind: --adopt without an id (exit ${c})"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-bound -- implement story-k --parent k-orch 2>&1)"
+[ "$(jq -r '.key' "${plans}/.sessions/k-bound.json")" = k-bound ] && pass "story-bind: the binding carries its file key in key" || fail "story-bind: no key field" "$(cat "${plans}/.sessions/k-bound.json")"
+o="$(sbx CLAUDE_CODE_HOST_SESSION_ID=local_hk CLAUDE_CODE_SESSION_ID=uuid-hk -- implement story-k --parent k-orch 2>&1)"
+[ "$(jq -r '.key + "/" + .session_id' "${plans}/.sessions/local_hk.json")" = local_hk/uuid-hk ] && pass "story-bind: with a host id the key is the host id and session_id stays the Claude Code id" || fail "story-bind: key and session_id" "$(cat "${plans}/.sessions/local_hk.json")"
+
 # A child does not write the binding files.
 kb g-plan plan story-g local_orch
 for c in "rm .plans/.sessions/x.json" "rm -f ${plans}/.sessions/g-orchestrator.json" "printf '{}' > \"${plans}/.sessions/g-plan.json\"" "sed -i '' s/plan/orchestrator/ .plans/.sessions/g-plan.json" "cp /tmp/x.json .plans/.sessions/g-plan.json"; do
