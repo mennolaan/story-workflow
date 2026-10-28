@@ -458,33 +458,64 @@ hook role-guard.sh "$(guard_in g-implement mcp__ccd_session_mgmt__clear_session 
 [ "${code}" -eq 0 ] && [[ "${out}" == *'"permissionDecision":"ask"'* ]] && [[ "${out}" == *'jq is not on PATH'* ]] \
   && pass "role-guard: without jq a clear_session asks" || fail "role-guard: without jq a clear_session passed with no decision" "code ${code}, out: ${out}"
 
-# story-bind
-o="$(printf '' | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-1 "${hooks}/story-bind.sh" implement story-z --parent local_orch 2>&1)"
+# story-bind. sbx runs it with the fixture config, a fixture HOME and a
+# fixture project, so the settings of the machine never count.
+home="${tmp}/home"
+sbproj="${tmp}/sbproj"
+mkdir -p "${home}/.claude" "${sbproj}/.claude" && git -C "${sbproj}" init -q
+printf '{"autoCompactWindow": 1000000}\n' >"${home}/.claude/settings.json"
+printf '{"autoCompactWindow": 432000}\n' >"${sbproj}/.claude/settings.json"
+sbx() { # sbx [KEY=VALUE ...] -- <story-bind args>
+  local vars=()
+  while [ "$1" != -- ]; do vars+=("$1"); shift; done
+  shift
+  env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_AUTO_COMPACT_WINDOW -u CLAUDE_CONFIG_DIR \
+    STORY_PLANS_DIR="${plans}" STORY_CONFIG="${tmp}/config.json" HOME="${home}" CLAUDE_PROJECT_DIR="${sbproj}" \
+    STORY_MANAGED_DIR="${tmp}/no-managed" STORY_MANAGED_PLIST="${tmp}/no-managed.plist" \
+    ${vars[@]+"${vars[@]}"} "${hooks}/story-bind.sh" "$@"
+}
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-1 -- implement story-z --parent local_orch 2>&1 </dev/null)"
 [ "$(jq -r '.role + "/" + .slug + "/" + .parent' "${plans}/.sessions/cli-1.json" 2>/dev/null)" = "implement/story-z/local_orch" ] && [ -d "${plans}/story-z.d" ] \
   && pass "story-bind: writes the binding under the session id" || fail "story-bind: binding wrong" "${o}"
-o="$(env STORY_PLANS_DIR="${plans}" CLAUDE_CODE_HOST_SESSION_ID=local_h9 CLAUDE_CODE_SESSION_ID=cli-9 "${hooks}/story-bind.sh" plan story-z 2>&1)"
+o="$(sbx CLAUDE_CODE_HOST_SESSION_ID=local_h9 CLAUDE_CODE_SESSION_ID=cli-9 -- plan story-z 2>&1)"
 [ -f "${plans}/.sessions/local_h9.json" ] && pass "story-bind: prefers the host id as the key" || fail "story-bind: host id not used" "${o}"
-env STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-2 "${hooks}/story-bind.sh" boss story-z >/dev/null 2>&1
+sbx CLAUDE_CODE_SESSION_ID=cli-2 -- boss story-z >/dev/null 2>&1
 [ $? -eq 1 ] && pass "story-bind: an unknown role exits 1" || fail "story-bind: unknown role accepted"
-env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID STORY_PLANS_DIR="${plans}" "${hooks}/story-bind.sh" plan story-z >/dev/null 2>&1
+sbx -- plan story-z >/dev/null 2>&1
 [ $? -eq 1 ] && pass "story-bind: no session id exits 1" || fail "story-bind: bound without a session id"
-o="$(env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-1 "${hooks}/story-bind.sh" --state)"
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-1 -- --state)"
 [ "${o}" = "${plans}/story-z.d/implement.md" ] && pass "story-bind: --state prints the bound checkpoint path" || fail "story-bind: --state wrong" "${o}"
-o="$(env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-free "${hooks}/story-bind.sh" --state)"
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-free -- --state)"
 [ "${o}" = "${plans}/.sessions/cli-free.md" ] && pass "story-bind: --state prints the unbound checkpoint path" || fail "story-bind: unbound --state wrong" "${o}"
 bind cli-u implement story-u
 for m in crossed nudged blocked; do printf '1\n' >"${plans}/.sessions/cli-u.${m}"; done
-o="$(env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-u "${hooks}/story-bind.sh" --unbind 2>&1)"
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-u -- --unbind 2>&1)"
 left="$(find "${plans}/.sessions" -name 'cli-u.*')"
 [ "${o}" = "Unbound cli-u." ] && [ -z "${left}" ] \
   && pass "story-bind: --unbind removes the binding and its marks" || fail "story-bind: --unbind left files" "${o}; ${left}"
-o="$(env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-u "${hooks}/story-bind.sh" --unbind 2>&1)"; c=$?
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-u -- --unbind 2>&1)"; c=$?
 [ "${c}" -eq 0 ] && [ "${o}" = "cli-u was not bound." ] && pass "story-bind: --unbind again exits 0" || fail "story-bind: a second --unbind failed" "${c} ${o}"
 bind cli-child implement story-u
-o="$(env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_CODE_SESSION_ID=cli-orch "${hooks}/story-bind.sh" --unbind cli-child 2>&1)"
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-orch -- --unbind cli-child 2>&1)"
 [ ! -e "${plans}/.sessions/cli-child.json" ] && pass "story-bind: --unbind <key> removes a child's binding" || fail "story-bind: --unbind <key> kept the binding" "${o}"
 hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"cli-child"}'
 [ -z "${out}" ] && pass "story-bind: an unbound session gets no re-prime" || fail "story-bind: re-prime after --unbind" "${out}"
+
+# story-bind fails loud without .claude/story.json (a command, not an automatic hook)
+for args in "implement story-nc" "--state" "--show" "--unbind" "--check"; do
+  # shellcheck disable=SC2086 # args holds several words on purpose
+  o="$(sbx STORY_CONFIG="${tmp}/absent/story.json" CLAUDE_CODE_SESSION_ID=cli-nc -- ${args} 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [[ "${o}" == *"${tmp}/absent/story.json"* && "${o}" == *story.example.json* ]] && [ ! -e "${plans}/.sessions/cli-nc.json" ] \
+    && pass "story-bind: ${args} without .claude/story.json exits 1 and names the file and story.example.json" \
+    || fail "story-bind: ${args} without .claude/story.json: exit ${c}" "${o}"
+done
+printf '{"checkpointPercent": 35,}\n' >"${tmp}/broken.json"
+o="$(sbx STORY_CONFIG="${tmp}/broken.json" CLAUDE_CODE_SESSION_ID=cli-nc -- implement story-nc 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [[ "${o}" == *"${tmp}/broken.json"*"not valid JSON"* ]] && [ ! -e "${plans}/.sessions/cli-nc.json" ] \
+  && pass "story-bind: a story.json that is not JSON exits 1 and names the file" || fail "story-bind: broken story.json: exit ${c}" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=cli-ck -- --check 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [[ "${o}" == *"${tmp}/config.json"* ]] && [ ! -e "${plans}/.sessions/cli-ck.json" ] \
+  && pass "story-bind: --check with a config exits 0, names it and binds nothing" || fail "story-bind: --check with a config: exit ${c}" "${o}"
 
 # plan-boundary stays silent in a bound session
 proj="${tmp}/proj"

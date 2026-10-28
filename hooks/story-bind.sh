@@ -10,11 +10,16 @@
 #   story-bind.sh --unbind [<key>]   remove the binding of this session (or of
 #                           <key>, a child's session id) and its .crossed,
 #                           .nudged and .blocked marks. Safe to run again.
+#   story-bind.sh --check   check the repo config and print its path; binds
+#                           nothing (step 0 of /story)
 # Roles: orchestrator, plan, implement, pr-review.
 #
 # Writes <plans>/.sessions/<key>.json with role, slug, state, parent, bound_at
 # and session_id, and creates <plans>/<slug>.d/. <plans> is the .plans/ folder
 # of the main checkout (story-lib.sh). Exit 1 with the reason on bad input.
+# Every mode exits 1 when the repo has no .claude/story.json or the file is not
+# valid JSON. It is a command, so it fails loud where the automatic hooks stay
+# silent.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -22,6 +27,18 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "${here}/story-lib.sh"
 
 fail() { printf 'story-bind: %s\n' "$1" >&2; exit 1; }
+
+config="$(story_config_file)"
+example="$(cd "${here}/.." && pwd)/skills/story/story.example.json"
+story_enabled || fail "this repo has no ${config}, so the story workflow is off here. To opt in, copy ${example} to ${config}, set the values for this repo and commit it."
+command -v jq >/dev/null 2>&1 || fail "jq is not on PATH. Install it (brew install jq)."
+err="$(jq -e 'type == "object"' "${config}" 2>&1 >/dev/null)" \
+  || fail "${config} is not valid JSON or not an object: ${err:-not an object}. Fix it. ${example} shows the shape."
+
+if [ "${1:-}" = "--check" ]; then
+  printf 'Config: %s\n' "${config}"
+  exit 0
+fi
 
 dir="$(story_plans_dir)" || fail "cannot find the shared .plans folder. Run this inside a git checkout of the repo, or set STORY_PLANS_DIR."
 
