@@ -77,7 +77,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 | `{{PHASES}}` | implement only: one numbered line per phase, from the plan's order of work, as `<n>. #<task id> <title>. Done when: <check>.` One board task per line. The last line is the review phase, which ends with `DOCKET`. |
 | `{{PLAN_TASK}}`, `{{REVIEW_TASK}}` | the board task of the plan phases and of the PR review phases; the story id when the board has no such task |
 
-A key that the config does not have fills its placeholder with `none`. Without a `review` block every `{{REVIEW_*}}` is `none`: the sessions skip the panel and say so in their report, and the orchestrator tells the user at the plan gate and at the docket step. Conventions (commits, prose, verification, research, PR review) come from the repo's CLAUDE.md, never from this plugin.
+`story.example.json` beside this file is a GitHub example without a `review` block. To run a review panel, add `"review": {"plan": ..., "changes": ..., "pr": ..., "fallback": ...}` with the review commands of the repo. A key that the config does not have fills its placeholder with `none`. Without a `review` block every `{{REVIEW_*}}` is `none`: the sessions skip the panel and say so in their report, and the orchestrator tells the user at the plan gate and at the docket step. Conventions (commits, prose, verification, research, PR review) come from the repo's CLAUDE.md, never from this plugin.
 
 ## Flow
 

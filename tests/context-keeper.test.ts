@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 // Every path holds spaces, as a repo path can.
-const ROOT = '/Users/dev/Repo/Team EIFFEL - LEAN'
+const ROOT = '/Users/dev/Repo/My Repo - A'
 const CONFIG = `${ROOT}/.claude/story.json`
 const CWD = `${ROOT}/.claude/worktrees/wt 1`
 const PLANS = `${ROOT}/.plans`

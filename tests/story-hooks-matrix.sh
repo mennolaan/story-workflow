@@ -200,7 +200,7 @@ cmds=(
   "AskUserQuestion|"
   "Bash|git push"
   "Bash|git push -u origin feature/577-x"
-  "Bash|git -C \"/Users/x/Team EIFFEL - LEAN\" push origin HEAD"
+  "Bash|git -C \"/Users/x/My Repo - A\" push origin HEAD"
   "Bash|cd backend && git push --force-with-lease"
   "Bash|az repos pr create --draft --source-branch a --target-branch development"
   "Bash|az repos pr update --id 5 --status completed"
@@ -212,7 +212,7 @@ cmds=(
   "Bash|az repos pr reviewer add --id 5 --reviewers x"
   "Bash|az repos pr work-item add --id 5 --work-items 6"
   "Bash|az repos pr policy queue --id 5 --evaluation-id x"
-  "Bash|az pipelines run --name eiffel-quality"
+  "Bash|az pipelines run --name nightly-quality"
   "Bash|az pipelines build queue --definition-name x"
   "Bash|bash -c 'git push origin HEAD'"
   "Bash|sh -c \"git push\""
@@ -415,7 +415,7 @@ map_check() { # map_check <map file> <file>...: exit 1 on a shared emoji, a shar
   ' "$@"
 }
 story="${repo}/skills/story"
-# A repo's CLAUDE.md that names the title states, like the one of Team EIFFEL - LEAN.
+# A repo's own CLAUDE.md that names the title states.
 printf -- '- Session titles show the state: one emoji per status token, never shared. The orchestrator removes its own ❗ or ⛔ with `set_session_title`. A child ends with 🔍 `DOCKET` or 📦 `READY TO PUSH`.\n' >"${tmp}/CLAUDE.md"
 map_check "${story}/SKILL.md" "${story}"/briefs/*.md "${repo}/skills/checkpoint/SKILL.md" "${tmp}/CLAUDE.md" >"${tmp}/map.out" 2>&1 \
   && pass "map: one emoji per state, and every brief agrees" || fail "map: the emoji map is not consistent" "$(cat "${tmp}/map.out")"
@@ -495,9 +495,13 @@ n="$(grep -l '{{REVIEW_\(PLAN\|CHANGES\|PR\)}}' "${story}"/briefs/*.md | wc -l |
 [ -z "${o}" ] && [ "${n}" -eq 3 ] && pass "review: each brief runs its review placeholder and skips the panel without a review block" || fail "review: a brief lacks its review placeholder or its skip rule (${n} briefs)" "${o}"
 grep -v 'skip the panel' "${story}/briefs/plan.md" >"${tmp}/no-skip.md"
 [ -n "$(review_skip_missing "${tmp}/no-skip.md")" ] && pass "review: a brief without the skip rule fails" || fail "review: a brief without the skip rule passed"
-repo_facts() { grep -n -E 'tme-lean|origin/development|az repos pr create|Team EIFFEL|/review-panel|/review-grok|feature/<id>' "$@"; }
-o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${repo}/skills/checkpoint/SKILL.md" "${hooks}"/*.sh)"
-[ -z "${o}" ] && pass "repo facts: no skill, brief or hook names the facts of one repo" || fail "repo facts: found" "${o}"
+repo_facts() { grep -n -i -E 'tme-lean|dev\.azure\.com|origin/development|az repos pr create|eiffel|/review-panel|/review-grok|feature/<id>' "$@"; }
+o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/story.example.json" "${repo}/skills/checkpoint/SKILL.md" \
+  "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin"/*.json)"
+[ -z "${o}" ] && pass "repo facts: no skill, brief, example config, hook, mod or mod test names the facts of one repo" || fail "repo facts: found" "${o}"
+jq -e '(.review | not) and (.board.show | type == "string") and (.pr.create | type == "string") and (.baseBranch | type == "string") and (.branch | type == "string") and (.backstopTokens | type == "number") and (.guard.deny | type == "array")' \
+  "${story}/story.example.json" >/dev/null && pass "example: story.example.json is valid, sets every key a repo needs and has no review block" \
+  || fail "example: story.example.json is not valid JSON, misses a key, or holds a review block that names commands a repo may not have"
 printf 'git merge-base --is-ancestor origin/development HEAD\n' >"${tmp}/fact.md"
 [ -n "$(repo_facts "${tmp}/fact.md")" ] && pass "repo facts: origin/development in a brief fails" || fail "repo facts: origin/development passed"
 
