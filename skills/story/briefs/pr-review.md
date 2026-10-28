@@ -10,7 +10,7 @@ You are the PR-REVIEW session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks
 One phase per turn, in this order. One board task per phase.
 1. `#{{REVIEW_TASK}}` Read and review.
    - Read the story and its tasks from the board with `{{BOARD_SHOW}}` (read only). The acceptance criteria are the yardstick.
-   - Review the PR per the PR review rules of the repo's CLAUDE.md. Write the docket to `{{PLANS}}/{{SLUG}}.d/pr-review-docket.md`.
+   - Review the PR per the PR review rules of the repo's {{CONVENTIONS}}. Write the docket to `{{PLANS}}/{{SLUG}}.d/pr-review-docket.md`.
    - End the turn with recap first line `PHASE DONE #{{REVIEW_TASK}} -`.
 2. `#{{REVIEW_TASK}}` Panel.
    - Run `{{REVIEW_PR}}` on the PR. Give it the design boards when the story has them.

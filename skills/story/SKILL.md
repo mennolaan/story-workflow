@@ -71,13 +71,14 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 | `{{REVIEW_PLAN}}` | `review.plan` of the config, with `{plan}` the absolute plan path |
 | `{{REVIEW_CHANGES}}`, `{{REVIEW_PR}}` | `review.changes` and `review.pr` of the config |
 | `{{REVIEW_FALLBACK}}` | `review.fallback` of the config: the command to run when the review command stops because a tool it needs is missing |
+| `{{CONVENTIONS}}` | `conventions` of the config: the file that holds the conventions and checks of the repo. Default `CLAUDE.md` |
 | `{{STORY_NOTES}}` | how to read the story (`{{BOARD_SHOW}}`), plus what the user said about scope |
 | `{{SCOPE}}` | the plan's order of work that this session owns, and what it must not do yet |
 | `{{PR_URL}}`, `{{BOARD_PATHS}}` | the PR link; the design board paths, or "none" |
 | `{{PHASES}}` | implement only: one numbered line per phase, from the plan's order of work, as `<n>. #<task id> <title>. Done when: <check>.` One board task per line. The last line is the review phase, which ends with `DOCKET`. |
 | `{{PLAN_TASK}}`, `{{REVIEW_TASK}}` | the board task of the plan phases and of the PR review phases; the story id when the board has no such task |
 
-`story.example.json` beside this file is a GitHub example without a `review` block. To run a review panel, add `"review": {"plan": ..., "changes": ..., "pr": ..., "fallback": ...}` with the review commands of the repo. A key that the config does not have fills its placeholder with `none`. Without a `review` block every `{{REVIEW_*}}` is `none`: the sessions skip the panel and say so in their report, and the orchestrator tells the user at the plan gate and at the docket step. Conventions (commits, prose, verification, research, PR review) come from the repo's CLAUDE.md, never from this plugin.
+`story.example.json` beside this file is a GitHub example without a `review` block. To run a review panel, add `"review": {"plan": ..., "changes": ..., "pr": ..., "fallback": ...}` with the review commands of the repo. A key that the config does not have fills its placeholder with `none`. Without a `review` block every `{{REVIEW_*}}` is `none`: the sessions skip the panel and say so in their report, and the orchestrator tells the user at the plan gate and at the docket step. Conventions (commits, prose, verification, research, PR review) come from the repo's `{{CONVENTIONS}}`, never from this plugin.
 
 ## Flow
 
@@ -96,7 +97,7 @@ The first line of a child's `wrap_up` recap is one token. The side-sessions even
 |---|---|
 | `PHASE DONE #<task> <sha>` | the phase check, then `next: #<task>` ("Phased turns and steering") |
 | `PLAN READY <path>` | the plan gate |
-| `QUESTION` | answers from the plan, CLAUDE.md, the wiki, memory and the user's earlier answers. Escalates to the user only what none of those settle. |
+| `QUESTION` | answers from the plan, the repo's `{{CONVENTIONS}}`, the wiki, memory and the user's earlier answers. Escalates to the user only what none of those settle. |
 | `DOCKET <path>` | the docket step |
 | `READY FOR LIVE CHECKS <branch> <sha>` | runs the live checks of the plan, then relays the results |
 | `READY TO PUSH <branch> <sha>` | the push step |

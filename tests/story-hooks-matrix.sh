@@ -530,6 +530,11 @@ n="$(grep -l '{{REVIEW_\(PLAN\|CHANGES\|PR\)}}' "${story}"/briefs/*.md | wc -l |
 [ -z "${o}" ] && [ "${n}" -eq 3 ] && pass "review: each brief runs its review placeholder and skips the panel without a review block" || fail "review: a brief lacks its review placeholder or its skip rule (${n} briefs)" "${o}"
 grep -v 'skip the panel' "${story}/briefs/plan.md" >"${tmp}/no-skip.md"
 [ -n "$(review_skip_missing "${tmp}/no-skip.md")" ] && pass "review: a brief without the skip rule fails" || fail "review: a brief without the skip rule passed"
+for f in "${story}"/briefs/*.md; do
+  grep -q "repo's {{CONVENTIONS}}" "${f}" && ! grep -q "CLAUDE\.md" "${f}" \
+    && pass "conventions: $(basename "${f}") sends the session to {{CONVENTIONS}} and names no CLAUDE.md" \
+    || fail "conventions: $(basename "${f}") names CLAUDE.md or lacks {{CONVENTIONS}}"
+done
 repo_facts() { grep -n -i -E 'tme-lean|dev\.azure\.com|origin/development|az repos pr create|eiffel|/review-panel|/review-grok|feature/<id>' "$@"; }
 o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/story.example.json" "${repo}/skills/checkpoint/SKILL.md" \
   "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin"/*.json)"

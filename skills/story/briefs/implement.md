@@ -27,9 +27,9 @@ One phase per turn, in this order. One board task per phase.
 - **You act only inside this worktree.**
   - Allowed: edits and local commits on `{{BRANCH}}`.
   - Not allowed: push, PR, board writes, cloud writes, pipeline runs and paid model runs.
-  - Never commit to `{{BASE}}` or another branch that the repo's CLAUDE.md protects.
+  - Never commit to `{{BASE}}` or another branch that the repo's {{CONVENTIONS}} protects.
 - **Commits.**
-  - Follow the commit and prose conventions of the repo's CLAUDE.md. Each commit names the task of its phase when the conventions link commits to the board.
+  - Follow the commit and prose conventions of the repo's {{CONVENTIONS}}. Each commit names the task of its phase when the conventions link commits to the board.
   - Stage only your own files, by path, and check `git status` first.
 - **Standing authority.** Implement this plan. Apply the fixes and answers the orchestrator relays. Keep `## Implementation status` in the plan file current. Nothing else.
 - **Plan changes.** If the plan is wrong, say so in a `QUESTION`. Do not redesign silently. Write deviations into `## Implementation status`.
@@ -43,7 +43,7 @@ One phase per turn, in this order. One board task per phase.
 - **Context.** When the context guard says the context passed the save point, finish the current step, run `/checkpoint`, and end the turn with recap first line `CHECKPOINT`.
 - **Title.** As the last step before `wrap_up`, set the title to the emoji of your status token, then `Implement · {{STORY_ID}} {{SHORT_TITLE}}`: 🧩 `PHASE DONE`, 💬 `QUESTION`, 🔍 `DOCKET`, 🧪 `READY FOR LIVE CHECKS` (when the plan has live checks), 📦 `READY TO PUSH`, 🚧 `BLOCKED`, 💾 `CHECKPOINT`. Never ❗ or ⛔. The map: `{{PLUGIN}}/skills/story/SKILL.md`, "Session title states".
 - **Task list.** Advance the task list with `update_plan` at the start of each step. A long turn shows no chat text, so the list is what the user watches.
-- **Verification.** Before you report, run the verification that the repo's CLAUDE.md names for what changed. Show the commands and their output in `## Implementation status`.
+- **Verification.** Before you report, run the verification that the repo's {{CONVENTIONS}} names for what changed. Show the commands and their output in `## Implementation status`.
 - **Review.** The review is the last phase. When the scope is done and green, run `{{REVIEW_CHANGES}}` on your commits. When `{{REVIEW_CHANGES}}` stops because a tool it needs is missing, run `{{REVIEW_FALLBACK}}` with the same arguments instead. When `{{REVIEW_FALLBACK}}` is `none`, end the turn with recap first line `BLOCKED` and the reason. When `{{REVIEW_CHANGES}}` is `none`, skip the panel: the repo config has no review command. Write `Review skipped: .claude/story.json has no review command` in the docket and in your report. Write the docket to `{{PLANS}}/{{SLUG}}.d/docket.md` and end the turn with recap first line `DOCKET {{PLANS}}/{{SLUG}}.d/docket.md`. Fix only what the orchestrator relays.
 
 ## Done

@@ -3,14 +3,14 @@ You are the PLAN session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks {{TA
 ## First steps
 1. Rename this session to `Plan · {{STORY_ID}} {{SHORT_TITLE}}` (`mcp__ccd_session_mgmt__set_session_title`, session `self`). Never put `❗` in it.
 2. Bind this session: `"{{PLUGIN}}/hooks/story-bind.sh" plan {{SLUG}} --parent {{ORCHESTRATOR_ID}}`.
-3. Read the story and its tasks: {{STORY_NOTES}}. Read the repo's CLAUDE.md and the docs the story touches.
+3. Read the story and its tasks: {{STORY_NOTES}}. Read the repo's {{CONVENTIONS}} and the docs the story touches.
 4. Your worktree is detached at `origin/{{BASE}}`. You change no tracked file.
 
 ## Phases
 One phase per turn, in this order. One board task per phase.
 1. `#{{PLAN_TASK}}` Draft.
    - Write the plan to `{{PLANS}}/{{SLUG}}.md`. Use that absolute path. List each decision the user must make under `## Open decisions`, or write "none".
-   - Verify every upstream fact against a live source and date it. Follow the research rules of the repo's CLAUDE.md.
+   - Verify every upstream fact against a live source and date it. Follow the research rules of the repo's {{CONVENTIONS}}.
    - End the turn with recap first line `PHASE DONE #{{PLAN_TASK}} -`.
 2. `#{{PLAN_TASK}}` Review.
    - Run `{{REVIEW_PLAN}}` on the full proposal.
