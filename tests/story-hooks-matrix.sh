@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Held-out check for the story hooks: context-guard.sh, session-reprime.sh,
 # role-guard.sh, pre-compact.sh, post-compact.sh, story-bind.sh, the bound
-# branch of plan-boundary.sh, and the config rule that autoCompactWindow in
-# .claude/settings.json equals backstopTokens in .claude/skills/story/config.json.
+# branch of plan-boundary.sh, the hook routing in hooks/hooks.json, and the
+# skill files of the story-workflow plugin.
 # Every case is falsifying: it fails when the branch it names is removed.
 # Fixtures live in a temp folder (STORY_PLANS_DIR, STORY_CONFIG). The session
 # ids of the calling session are unset, so a run inside Claude Code tests the
 # fixtures only. Runs shellcheck on every hook when it is installed.
-# Usage: .claude/hooks/tests/story-hooks-matrix.sh   (exit 0 = all cases pass)
+# Usage: tests/story-hooks-matrix.sh   (from the plugin root; exit 0 = all cases pass)
 # shellcheck disable=SC2015,SC2016 # pass and fail return 0; backticks in single quotes are literal Markdown.
 set -uo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-hooks="${repo}/.claude/hooks"
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+hooks="${repo}/hooks"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 plans="${tmp}/plans"
@@ -225,8 +225,8 @@ for row in "g-implement|g-child|a child caller" "g-orchestrator|g-plan|a target 
   hook role-guard.sh "$(guard_in "${caller}" "${cs}" "${target}")"
   [[ "${out}" == *'"permissionDecision":"ask"'* ]] && pass "clear-gate: ${why} gets ask" || fail "clear-gate: ${why} not asked" "${out}"
 done
-jq -e '.hooks.PreToolUse[] | select(.matcher | split("|") | (index("Bash") and index("mcp__terminal__run_in_terminal") and index("mcp__ccd_session_mgmt__clear_session"))) | .hooks[].command == "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/role-guard.sh"' \
-  "${repo}/.claude/settings.json" >/dev/null && pass "role-guard: settings route run_in_terminal and clear_session to the guard" || fail "role-guard: no PreToolUse entry with Bash, mcp__terminal__run_in_terminal and mcp__ccd_session_mgmt__clear_session in its matcher has exactly the command that runs .claude/hooks/role-guard.sh from the project dir"
+jq -e '.hooks.PreToolUse[] | select(.matcher | split("|") | (index("Bash") and index("mcp__terminal__run_in_terminal") and index("mcp__ccd_session_mgmt__clear_session"))) | .hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\""' \
+  "${hooks}/hooks.json" >/dev/null && pass "role-guard: hooks.json routes run_in_terminal and clear_session to the guard" || fail "role-guard: no PreToolUse entry in hooks/hooks.json with Bash, mcp__terminal__run_in_terminal and mcp__ccd_session_mgmt__clear_session in its matcher has exactly the command that runs hooks/role-guard.sh from the plugin root"
 hook role-guard.sh 'not json' >/dev/null
 [ "${code}" -eq 1 ] && grep -q "not JSON" "${tmp}/stderr" && pass "role-guard: a non-JSON input fails loud (exit 1)" || fail "role-guard: non-JSON input exit ${code}"
 
@@ -237,10 +237,10 @@ check_config() { # check_config <settings> <config>
   b="$(jq -r '.backstopTokens // empty' "$2" 2>/dev/null)"
   [ -n "${a}" ] && [ "${a}" = "${b}" ]
 }
-check_config "${repo}/.claude/settings.json" "${repo}/.claude/skills/story/config.json" \
-  && pass "config: autoCompactWindow equals backstopTokens" \
-  || fail "config: autoCompactWindow in .claude/settings.json differs from backstopTokens in .claude/skills/story/config.json. Set both to the same token count."
 printf '{"autoCompactWindow": 432000}\n' >"${tmp}/settings.json"
+check_config "${tmp}/settings.json" "${tmp}/config.json" \
+  && pass "config: the check passes autoCompactWindow equal to backstopTokens" \
+  || fail "config: the check failed on equal values" "$(cat "${tmp}/settings.json" "${tmp}/config.json")"
 printf '{"backstopTokens": 450000}\n' >"${tmp}/config-mismatch.json"
 check_config "${tmp}/settings.json" "${tmp}/config-mismatch.json" && fail "config: the check passed a mismatch" || pass "config: the check fails on a mismatch"
 
@@ -271,20 +271,22 @@ out="$(jq -cn '{hook_event_name:"PostToolUse",session_id:"pb-wt",tool_name:"Bash
 # hook's title output (live check E0c, 2026-10-27); the orchestrator removes
 # its own ❗ or ⛔ with set_session_title. The pattern is a bracket class so
 # that this file does not match itself.
-title_hooks() { # title_hooks <settings> <project dir>: prints each hook that sets the title
+title_hooks() { # title_hooks <hooks.json> <plugin root>: prints each hook that sets the title
   jq -r '.hooks // {} | to_entries[] | .key as $e | .value[].hooks[]? | select(.type == "command") | "\($e)\t\(.command)"' "$1" \
   | while IFS=$'\t' read -r e c; do
-      f="$2${c#\"\$CLAUDE_PROJECT_DIR\"}"
+      c="${c#\"\$\{CLAUDE_PLUGIN_ROOT\}}"
+      f="$2${c%\"}"
+      [ -f "${f}" ] || { printf '%s hook %s is not a file\n' "${e}" "${f}"; continue; }
       grep -q 'session[T]itle' "${f}" 2>/dev/null && printf '%s hook %s sets the session title\n' "${e}" "${f}"
     done
 }
-o="$(title_hooks "${repo}/.claude/settings.json" "${repo}")"
-[ -z "${o}" ] && pass "title: no registered hook sets the session title" || fail "title: a hook sets the session title" "${o}"
+o="$(title_hooks "${hooks}/hooks.json" "${repo}")"
+[ -z "${o}" ] && pass "title: no registered hook sets the session title" || fail "title: a hook sets the session title, or names no file" "${o}"
 mkdir -p "${tmp}/tproj/hooks"
 printf '#!/bin/sh\njq -cn %s\n' "'{hookSpecificOutput:{hookEventName:\"UserPromptSubmit\",session$(printf T)itle:\"x\"}}'" >"${tmp}/tproj/hooks/t.sh"
-printf '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"\\"$CLAUDE_PROJECT_DIR\\"/hooks/t.sh"}]}]}}\n' >"${tmp}/tproj/settings.json"
-o="$(title_hooks "${tmp}/tproj/settings.json" "${tmp}/tproj")"
-[ -n "${o}" ] && pass "title: a UserPromptSubmit hook that sets the title fails" || fail "title: a title-setting hook passed" "$(cat "${tmp}/tproj/hooks/t.sh" "${tmp}/tproj/settings.json")"
+printf '{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"\\"${CLAUDE_PLUGIN_ROOT}/hooks/t.sh\\""}]}]}}\n' >"${tmp}/tproj/hooks.json"
+o="$(title_hooks "${tmp}/tproj/hooks.json" "${tmp}/tproj")"
+[[ "${o}" == *"sets the session title"* ]] && pass "title: a UserPromptSubmit hook that sets the title fails" || fail "title: a title-setting hook passed" "$(cat "${tmp}/tproj/hooks/t.sh" "${tmp}/tproj/hooks.json") ${o}"
 
 # 4d. one emoji map: /story holds it; briefs, /checkpoint and CLAUDE.md agree
 map_check() { # map_check <map file> <file>...: exit 1 on a shared emoji, a shared token or a wrong pairing
@@ -313,10 +315,12 @@ map_check() { # map_check <map file> <file>...: exit 1 on a shared emoji, a shar
     exit($bad ? 1 : 0);
   ' "$@"
 }
-story="${repo}/.claude/skills/story"
-map_check "${story}/SKILL.md" "${story}"/briefs/*.md "${repo}/.claude/skills/checkpoint/SKILL.md" "${repo}/CLAUDE.md" >"${tmp}/map.out" 2>&1 \
+story="${repo}/skills/story"
+# A repo's CLAUDE.md that names the title states, like the one of Team EIFFEL - LEAN.
+printf -- '- Session titles show the state: one emoji per status token, never shared. The orchestrator removes its own ❗ or ⛔ with `set_session_title`. A child ends with 🔍 `DOCKET` or 📦 `READY TO PUSH`.\n' >"${tmp}/CLAUDE.md"
+map_check "${story}/SKILL.md" "${story}"/briefs/*.md "${repo}/skills/checkpoint/SKILL.md" "${tmp}/CLAUDE.md" >"${tmp}/map.out" 2>&1 \
   && pass "map: one emoji per state, and every brief agrees" || fail "map: the emoji map is not consistent" "$(cat "${tmp}/map.out")"
-for f in "${story}"/briefs/*.md "${repo}/.claude/skills/checkpoint/SKILL.md"; do
+for f in "${story}"/briefs/*.md "${repo}/skills/checkpoint/SKILL.md"; do
   grep -q '💾 `CHECKPOINT`' "${f}" && pass "map: $(basename "${f}") carries its title states" || fail "map: $(basename "${f}") names no title state"
 done
 protocol_missing() { # protocol_missing <map file> <protocol line>: prints each child token of the map that the line does not name
@@ -369,8 +373,6 @@ awk '/^\{\{PHASES\}\}$/ { print "1. #578 Hooks. Done when: the matrix is green."
 phase_check "${tmp}/filled.md" >"${tmp}/phase.out" && pass "phases: a filled implement brief passes" || fail "phases: a filled implement brief failed" "$(cat "${tmp}/phase.out")"
 grep -q '^## Phased turns and steering$' "${story}/SKILL.md" && grep -q 'stop_session' "${story}/SKILL.md" \
   && pass "phases: /story carries the phased-turn rules" || fail "phases: /story has no phased-turn rules"
-jq -e '.permissions.allow | index("mcp__ccd_session_mgmt__clear_session")' "${repo}/.claude/settings.json" >/dev/null \
-  && pass "phases: settings allow clear_session for the reset" || fail "phases: .claude/settings.json does not allow mcp__ccd_session_mgmt__clear_session"
 
 # 5. pre-compact and post-compact
 bind s-pc implement story-p
@@ -452,12 +454,13 @@ o="$(printf '%s' "$(pb_in pb-bound)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_
 [ -z "${o}" ] && pass "plan-boundary: a bound session is silent" || fail "plan-boundary: bound session reminded" "${o}"
 
 # 6. syntax and shellcheck
-for f in "${hooks}"/*.sh "${hooks}"/tests/*.sh; do
+for f in "${hooks}"/*.sh "${repo}"/tests/*.sh; do
   bash -n "${f}" && pass "bash -n $(basename "${f}")" || fail "bash -n $(basename "${f}")"
 done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -P "${hooks}" "${hooks}"/story-*.sh "${hooks}"/session-reprime.sh "${hooks}"/context-guard.sh \
-    "${hooks}"/role-guard.sh "${hooks}"/pre-compact.sh "${hooks}"/post-compact.sh "${hooks}"/plan-boundary.sh "${hooks}"/tests/*.sh \
+    "${hooks}"/role-guard.sh "${hooks}"/pre-compact.sh "${hooks}"/post-compact.sh "${hooks}"/plan-boundary.sh \
+    "${hooks}"/lint-mark.sh "${repo}"/tests/*.sh \
     && pass "shellcheck" || fail "shellcheck"
 else
   printf 'skip shellcheck (not installed)\n'
