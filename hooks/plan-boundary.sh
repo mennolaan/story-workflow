@@ -2,7 +2,7 @@
 # Claude Code PostToolUse on Edit|Write|Bash: print the compaction reminder
 # once per session per plan, at the moment a plan under .plans/ gains its
 # "## Review" section. That section is what marks the plan phase finished
-# (CLAUDE.md "Stories and features" step 3).
+# (skills/story/SKILL.md, "Flow" step 1).
 # Why PostToolUse and not FileChanged: the FileChanged matcher is a literal
 # filename watch list over a letters, digits and underscore charset
 # (code.claude.com/docs/en/hooks, verified 2026-08-21), and plan files carry
@@ -15,7 +15,8 @@
 # build phase then re-read all of it on every call. One /compact at this point
 # was worth about 23 percent of that session.
 # The hook is informational. It never blocks and it always exits 0.
-# Without .claude/story.json it prints nothing (story_enabled).
+# It prints nothing unless .claude/story.json sets "planBoundary": true
+# (story_plan_boundary).
 set -uo pipefail
 
 note() {  # note <text>; renders in the transcript for the user
@@ -31,7 +32,7 @@ input="$(cat)"
 # and the context-keeper mod), so this reminder stays silent there.
 # shellcheck source=story-lib.sh
 . "$(dirname "$0")/story-lib.sh"
-story_enabled || exit 0
+story_plan_boundary || exit 0
 [ -n "$(story_binding "${input}")" ] && exit 0
 tool="$(jq -r '.tool_name // empty' <<<"${input}" 2>/dev/null)"
 file="$(jq -r '.tool_input.file_path // empty' <<<"${input}" 2>/dev/null)"

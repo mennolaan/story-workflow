@@ -17,7 +17,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 plans="${tmp}/plans"
 mkdir -p "${plans}/.sessions"
-printf '{"checkpointPercent": 35, "backstopTokens": 432000}\n' >"${tmp}/config.json"
+printf '{"checkpointPercent": 35, "backstopTokens": 432000, "planBoundary": true}\n' >"${tmp}/config.json"
 
 rc=0
 pass() { printf 'ok   %s\n' "$1"; }
@@ -136,7 +136,7 @@ hook context-guard.sh "$(ptu s-cross "${t}")"; [[ "${out}" == *additionalContext
 printf '{"checkpointPercent": 50, "backstopTokens": 600000}\n' >"${tmp}/config.json"
 t="$(transcript cfg 400000 claude-opus-5-5)"
 hook context-guard.sh "$(ptu s-cfg "${t}")"; [ -z "${out}" ] && pass "guard: checkpointPercent comes from config.json" || fail "guard: config.json ignored" "${out}"
-printf '{"checkpointPercent": 35, "backstopTokens": 432000}\n' >"${tmp}/config.json"
+printf '{"checkpointPercent": 35, "backstopTokens": 432000, "planBoundary": true}\n' >"${tmp}/config.json"
 
 # 2. context-guard on Stop
 t="$(transcript stop 360000 claude-opus-5-5)"
@@ -496,6 +496,21 @@ o="$(printf '%s' "$(pb_in pb-free)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_P
 bind pb-bound plan story-pb
 o="$(printf '%s' "$(pb_in pb-bound)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" STORY_CONFIG="${tmp}/config.json" CLAUDE_PROJECT_DIR="${proj}" TMPDIR="${tmp}" "${hooks}/plan-boundary.sh")"
 [ -z "${o}" ] && pass "plan-boundary: a bound session is silent" || fail "plan-boundary: bound session reminded" "${o}"
+# planBoundary false or missing: plan-boundary is silent and lint-mark stamps nothing.
+lm_in='{"hook_event_name":"PreToolUse","session_id":"pb-off","tool_name":"Bash","tool_input":{"command":"true"}}'
+for cfg in '{"checkpointPercent": 35}' '{"checkpointPercent": 35, "planBoundary": false}' '{"planBoundary": "yes"}'; do
+  printf '%s\n' "${cfg}" >"${tmp}/pb-cfg.json"
+  rm -rf "${tmp}/pb-tmp" && mkdir -p "${tmp}/pb-tmp"
+  printf '%s' "${lm_in}" | env STORY_CONFIG="${tmp}/pb-cfg.json" TMPDIR="${tmp}/pb-tmp" "${hooks}/lint-mark.sh"
+  o="$(printf '%s' "$(pb_in pb-off)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" STORY_CONFIG="${tmp}/pb-cfg.json" CLAUDE_PROJECT_DIR="${proj}" TMPDIR="${tmp}/pb-tmp" "${hooks}/plan-boundary.sh")"
+  [ -z "${o}" ] && [ -z "$(listing "${tmp}/pb-tmp" -type f)" ] \
+    && pass "plan-boundary: ${cfg} prints no reminder and writes no stamp" \
+    || fail "plan-boundary: ${cfg} reminded or stamped" "out: ${o}; files: $(listing "${tmp}/pb-tmp" -type f)"
+done
+printf '{"planBoundary": true}\n' >"${tmp}/pb-cfg.json"
+rm -rf "${tmp}/pb-tmp" && mkdir -p "${tmp}/pb-tmp"
+printf '%s' "${lm_in}" | env STORY_CONFIG="${tmp}/pb-cfg.json" TMPDIR="${tmp}/pb-tmp" "${hooks}/lint-mark.sh"
+[ -f "${tmp}/pb-tmp/claude-lint-mark-pb-off" ] && pass "lint-mark: planBoundary true writes the stamp" || fail "lint-mark: planBoundary true wrote no stamp"
 
 # 6. syntax and shellcheck
 for f in "${hooks}"/*.sh "${repo}"/tests/*.sh; do

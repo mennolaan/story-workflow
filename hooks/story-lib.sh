@@ -52,6 +52,13 @@ story_config_file() {
 # without jq.
 story_enabled() { [ -f "$(story_config_file)" ]; }
 
+# story_plan_boundary: opted in, and "planBoundary" is the JSON value true.
+# Any other value, or a config jq cannot read, keeps plan-boundary.sh and
+# lint-mark.sh off.
+story_plan_boundary() {
+  story_enabled && [ "$(jq -r '.planBoundary == true' "$(story_config_file)" 2>/dev/null)" = true ]
+}
+
 # story_config <key> <default>
 story_config() {
   local v
