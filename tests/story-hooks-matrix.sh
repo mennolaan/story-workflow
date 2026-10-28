@@ -274,20 +274,6 @@ jq -e '.hooks.PreToolUse[] | select(.matcher | split("|") | (index("Bash") and i
 hook role-guard.sh 'not json' >/dev/null
 [ "${code}" -eq 1 ] && grep -q "not JSON" "${tmp}/stderr" && pass "role-guard: a non-JSON input fails loud (exit 1)" || fail "role-guard: non-JSON input exit ${code}"
 
-# 4b. config: autoCompactWindow equals backstopTokens
-check_config() { # check_config <settings> <config>
-  local a b
-  a="$(jq -r '.autoCompactWindow // empty' "$1" 2>/dev/null)"
-  b="$(jq -r '.backstopTokens // empty' "$2" 2>/dev/null)"
-  [ -n "${a}" ] && [ "${a}" = "${b}" ]
-}
-printf '{"autoCompactWindow": 432000}\n' >"${tmp}/settings.json"
-check_config "${tmp}/settings.json" "${tmp}/config.json" \
-  && pass "config: the check passes autoCompactWindow equal to backstopTokens" \
-  || fail "config: the check failed on equal values" "$(cat "${tmp}/settings.json" "${tmp}/config.json")"
-printf '{"backstopTokens": 450000}\n' >"${tmp}/config-mismatch.json"
-check_config "${tmp}/settings.json" "${tmp}/config-mismatch.json" && fail "config: the check passed a mismatch" || pass "config: the check fails on a mismatch"
-
 # 4b2. repo files come from the main checkout root, also in a worktree.
 # Fixture: a main checkout with checkpointPercent 35 and a worktree with 90.
 # The guard runs with the worktree as project dir and no STORY_CONFIG.
@@ -516,6 +502,63 @@ o="$(sbx STORY_CONFIG="${tmp}/broken.json" CLAUDE_CODE_SESSION_ID=cli-nc -- impl
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-ck -- --check 2>&1)"; c=$?
 [ "${c}" -eq 0 ] && [[ "${o}" == *"${tmp}/config.json"* ]] && [ ! -e "${plans}/.sessions/cli-ck.json" ] \
   && pass "story-bind: --check with a config exits 0, names it and binds nothing" || fail "story-bind: --check with a config: exit ${c}" "${o}"
+
+# Backstop gate: story-bind refuses to bind when the effective
+# autoCompactWindow is missing or above backstopTokens (432000).
+bs() { # bs <label> <expect bind|refuse> [KEY=VALUE ...]: one backstop case with the files staged by the caller
+  local label="$1" want="$2" key
+  shift 2
+  key="bs-$(printf '%s' "${label}" | tr -cd 'a-z0-9')"
+  rm -f "${plans}/.sessions/${key}.json"
+  o="$(sbx CLAUDE_CODE_SESSION_ID="${key}" "$@" -- implement story-bs 2>&1)"; c=$?
+  if [ "${want}" = bind ]; then
+    [ "${c}" -eq 0 ] && [ -f "${plans}/.sessions/${key}.json" ] && pass "backstop: ${label} binds" || fail "backstop: ${label} did not bind (exit ${c})" "${o}"
+  else
+    [ "${c}" -eq 1 ] && [ ! -f "${plans}/.sessions/${key}.json" ] && [[ "${o}" == *autoCompactWindow* ]] \
+      && pass "backstop: ${label} refuses and names autoCompactWindow" || fail "backstop: ${label} was not refused (exit ${c})" "${o}"
+  fi
+}
+proj_s="${sbproj}/.claude/settings.json"
+local_s="${sbproj}/.claude/settings.local.json"
+user_s="${home}/.claude/settings.json"
+mkdir -p "${tmp}/managed"
+rm -f "${proj_s}"
+bs "user 1000000 and no project key" refuse
+printf '{"autoCompactWindow": 432000}\n' >"${proj_s}"
+bs "user 1000000 and project 432000" bind
+printf '{"autoCompactWindow": 1000000}\n' >"${local_s}"
+bs "local 1000000 over project 432000" refuse
+printf '{"autoCompactWindow": 400000}\n' >"${tmp}/managed/managed-settings.json"
+bs "managed 400000 over local 1000000" bind STORY_MANAGED_DIR="${tmp}/managed"
+printf '{"autoCompactWindow": 1000000}' >"${tmp}/mdm.json" && plutil -convert xml1 -o "${tmp}/mdm.plist" "${tmp}/mdm.json"
+bs "an MDM plist 1000000 over managed-settings.json 400000" refuse STORY_MANAGED_DIR="${tmp}/managed" STORY_MANAGED_PLIST="${tmp}/mdm.plist"
+mkdir -p "${tmp}/managed/managed-settings.d"
+printf '{"autoCompactWindow": 900000}\n' >"${tmp}/managed/managed-settings.d/20-ctx.json"
+bs "a managed-settings.d drop-in 900000 over managed-settings.json 400000" refuse STORY_MANAGED_DIR="${tmp}/managed"
+rm -rf "${tmp}/managed" "${local_s}"
+bs "project 432000 again" bind
+printf '{"autoCompactWindow": 432000, "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 1000000}}}\n' >"${user_s}"
+bs "a user modelSettings window under a project top-level key" bind
+printf '{"autoCompactWindow": 432000, "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": "auto"}}}\n' >"${proj_s}"
+bs "a project modelSettings window \"auto\" in the same file" refuse
+printf '{"autoCompactWindow": 432000}\n' >"${proj_s}"
+bs "CLAUDE_CODE_AUTO_COMPACT_WINDOW 1M over project 432000" refuse CLAUDE_CODE_AUTO_COMPACT_WINDOW=1M
+bs "CLAUDE_CODE_AUTO_COMPACT_WINDOW 400k" bind CLAUDE_CODE_AUTO_COMPACT_WINDOW=400k
+bs "a CLAUDE_CODE_AUTO_COMPACT_WINDOW that is no size falls back to the files" bind CLAUDE_CODE_AUTO_COMPACT_WINDOW=lots
+mkdir -p "${tmp}/cfgdir"
+printf '{"autoCompactWindow": 1000000}\n' >"${tmp}/cfgdir/settings.json"
+rm -f "${proj_s}"
+printf '{}\n' >"${user_s}"
+bs "CLAUDE_CONFIG_DIR holds the user settings" refuse CLAUDE_CONFIG_DIR="${tmp}/cfgdir"
+printf '{"autoCompactWindow": 432000}\n' >"${proj_s}"
+printf '{"checkpointPercent": 35, "backstopTokens": 400000}\n' >"${tmp}/bs-cfg.json"
+bs "project 432000 above backstopTokens 400000" refuse STORY_CONFIG="${tmp}/bs-cfg.json"
+o="$(sbx CLAUDE_CODE_SESSION_ID=bs-roles -- --unbind 2>&1)"; c=$?
+rm -f "${proj_s}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=bs-roles -- --state 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && pass "backstop: --state does not check the backstop" || fail "backstop: --state refused" "${o}"
+printf '{"autoCompactWindow": 1000000}\n' >"${user_s}"
+printf '{"autoCompactWindow": 432000}\n' >"${proj_s}"
 
 # plan-boundary stays silent in a bound session
 proj="${tmp}/proj"
