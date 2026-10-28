@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse (hooks/hooks.json routes the tools): a bound child session (plan,
+# Claude Code PreToolUse (hooks/hooks.json routes the tools, Monitor too): a bound child session (plan,
 # implement, pr-review) does not ask the user and does not act outward. Only
 # the orchestrator does (skills/story/SKILL.md, "Authority").
 # Denied for a child role:
@@ -15,9 +15,16 @@
 #   --raw-field or --input and no explicit GET (gh then sends a POST)
 #   each Perl regex in "guard.deny" of .claude/story.json
 #   a write to <plans>/.sessions/ (the binding files): Edit, Write and
-#   NotebookEdit on a path under it, and rm, mv, cp, tee, truncate, ln,
-#   sed -i, > or >> in a shell command. A deny list: a script in another
-#   language can still write there.
+#   NotebookEdit on a path under it (compared in lower case), and rm, mv, cp,
+#   tee, truncate, ln, dd, touch, chmod, chown, rsync, sed -i, find -delete,
+#   cd into it, > or >> in a shell command, with globs matched. The same
+#   paths cover .claude/story.json and .claude/settings*.json, and rm or mv of
+#   the .plans folder. File tools of MCP servers (names with write, edit, move,
+#   create, delete, copy, rename or append) get the same path check. A deny
+#   list: a script in another language can still write there.
+#   Setting CLAUDE_CODE_*, STORY_*, CLAUDE_PROJECT_DIR or CLAUDE_CONFIG_DIR in
+#   a command (also behind env or export), because story-bind.sh takes the
+#   identity of the caller from them.
 # in Bash and in mcp__terminal__run_in_terminal (the user's own shell).
 # MCP tools that act outward (the hooks.json matcher sends mcp__.*):
 #   mcp__ccd_pr__* except get_status; ccd_session start_session and
@@ -136,6 +143,19 @@ extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "s
 tools="$(jq -r '(.guard.denyTools // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.denyTools is not a list of strings") end' "${config}" 2>&1)" \
   || { broken="${broken:+${broken}; }${tools}"; tools=""; }
 
+# protected_path <path>: exit 0 for a path that a child never writes. Case-
+# insensitive, because the macOS file system is. The binding folder, the repo
+# config and the settings files.
+protected_path() {
+  local p
+  p="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "${p}" in
+    "$(printf '%s' "${sessions}" | tr '[:upper:]' '[:lower:]')"/*|*/.sessions|*/.sessions/*|.sessions|.sessions/*) return 0 ;;
+    */.claude/story.json|.claude/story.json|*/.claude/settings.json|.claude/settings.json|*/.claude/settings.local.json|.claude/settings.local.json) return 0 ;;
+  esac
+  return 1
+}
+
 # mcp_builtin <tool name>: exit 0 when a child may not call the MCP tool.
 mcp_builtin() {
   local t="$1" target
@@ -145,6 +165,10 @@ mcp_builtin() {
     mcp__ccd_session_mgmt__archive_session|mcp__ccd_session_mgmt__unarchive_session|mcp__ccd_session_mgmt__delete_session) return 0 ;;
     mcp__ccd_session_mgmt__stop_session|mcp__ccd_session_mgmt__clear_session|mcp__ccd_session_mgmt__detach_session) return 0 ;;
     mcp__ccd_session_mgmt__send_message|mcp__ccd_session_mgmt__set_remote_control) return 0 ;;
+    mcp__ccd_session_mgmt__set_session_fast_mode|mcp__ccd_session_mgmt__set_session_output_style) return 0 ;;
+    mcp__ccd_settings__set_setting|mcp__ccd_connectors__set_session_connector_enabled|mcp__ccd_connectors__reconnect_session_connector) return 0 ;;
+    mcp__scheduled-tasks__create_scheduled_task|mcp__scheduled-tasks__update_scheduled_task|mcp__scheduled-tasks__delete_scheduled_task|mcp__scheduled-tasks__run_scheduled_task) return 0 ;;
+    mcp__playwright__playwright_post|mcp__playwright__playwright_put|mcp__playwright__playwright_patch|mcp__playwright__playwright_delete) return 0 ;;
     mcp__ccd_session_mgmt__set_session_model|mcp__ccd_session_mgmt__set_session_effort|mcp__ccd_session_mgmt__set_session_permission_mode) return 0 ;;
     mcp__ccd_host__sync_with_base_branch|mcp__ccd_host__discard_kept_worktree|mcp__ccd_host__clean_up_worktrees) return 0 ;;
     mcp__ccd_session_mgmt__set_session_title)
@@ -157,8 +181,14 @@ mcp_builtin() {
 
 case "${tool}" in
   AskUserQuestion) deny "ask the user (AskUserQuestion)" ;;
-  Bash|mcp__terminal__run_in_terminal) ;;
+  Bash|Monitor|mcp__terminal__run_in_terminal) ;;
   mcp__*)
+    if [[ "${tool}" =~ _(write|edit|move|create|delete|remove|copy|rename|append|patch)[a-z_]*$ ]]; then
+      while IFS= read -r path; do
+        [ -n "${path}" ] || continue
+        if protected_path "${path}"; then deny "change the binding files or the repo config (${tool} ${path}). Only story-bind.sh of the orchestrator does that"; fi
+      done < <(jq -r '[.tool_input | objects | (.path?, .file_path?, .source?, .destination?, .notebook_path?, (.paths? // [] | if type == "array" then .[] else empty end), (.edits? // [] | if type == "array" then .[].path? else empty end)) | strings] | .[]' <<<"${input}" 2>/dev/null)
+    fi
     if mcp_builtin "${tool}"; then deny "call ${tool}, which acts outward"; fi
     tool_hit="$(STORY_DENY_TOOLS="${tools}" perl -e '
       my $t = shift;
@@ -175,9 +205,7 @@ case "${tool}" in
     exit 0 ;;
   Edit|Write|NotebookEdit)
     path="$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"${input}")"
-    case "${path}" in
-      "${sessions}"/*|*/.sessions/*|.sessions/*) deny "change the binding files (${tool} ${path}). Only story-bind.sh of the orchestrator does that" ;;
-    esac
+    if protected_path "${path}"; then deny "change the binding files or the repo config (${tool} ${path}). Only story-bind.sh of the orchestrator does that"; fi
     exit 0 ;;
   *) exit 0 ;;
 esac

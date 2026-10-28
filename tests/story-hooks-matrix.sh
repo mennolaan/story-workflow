@@ -280,10 +280,66 @@ cmds=(
   $'Bash|echo "<<END"\ngit push origin HEAD'
   $'Bash|echo $((1<<X))\ngit push'
   $'Bash|cat <<EOF\n$(git push)\nEOF'
+  "Bash|CLAUDE_CODE_HOST_SESSION_ID=ORCH ./hooks/story-bind.sh --unbind CHILD"
+  "Bash|env CLAUDE_CODE_SESSION_ID=X ./hooks/story-bind.sh --adopt V"
+  "Bash|export CLAUDE_CODE_HOST_SESSION_ID=X"
+  "Bash|STORY_PLANS_DIR=/tmp/p git status"
+  $'Bash|echo "$(true #)\n)"; git push; echo x # "'
+  $'Bash|echo "$(cat <<\'E\'\n)"\nE\n)"; git push; echo x # "'
+  "Bash|a=push; git \$a"
+  "Bash|x=git; \$x push"
+  "Bash|\$SHELL -c 'git push'"
+  "Bash|git pus{h,}"
+  "Bash|=git push"
+  "Bash|noglob git push"
+  "Bash|repeat 1 git push"
+  "Bash|emulate zsh -c 'git push'"
+  "Bash|function f { git push; }; f"
+  "Bash|env -S 'git push'"
+  "Bash|find . -exec git push \\;"
+  "Bash|echo push | xargs git"
+  "Bash|nice -n 5 git push"
+  "Bash|timeout 5 git push"
+  "Bash|stdbuf -oL git push"
+  "Bash|su -c 'git push'"
+  "Bash|fish -c 'git push'"
+  "Bash|git -c alias.x=push x"
+  "Bash|git config alias.p push"
+  "Bash|git submodule foreach 'git push'"
+  "Bash|git rebase -x 'git push' HEAD~1"
+  "Bash|git subtree push --prefix x origin main"
+  "Bash|gh api -iXPOST repos/x"
+  "Bash|gh api -if a=b repos/x"
+  "Bash|gh alias set pc 'pr create'"
+  "Bash|gh release create v1"
+  "Bash|gh repo delete x"
+  "Bash|gh workflow run x"
+  "Bash|gh secret set X"
+  "Bash|az --debug repos pr create"
+  "Bash|az -o json repos pr create"
+  "Bash|az rest --method post --url x"
+  "Bash|az devops invoke --http-method POST"
+  "Bash|az pipelines create --name x"
+  $'Bash|cd .plans/.sessions && rm a.json'
+  "Bash|rm .plans/.sess*/a.json"
+  "Bash|rm ci/.SESSIONS/a"
+  "Bash|echo x > ci/.Sessions/a"
+  "Bash|find .plans/.sessions -name a.json -delete"
+  "Bash|dd of=.plans/.sessions/a.json"
+  "Bash|touch .plans/.sessions/a"
+  "Bash|rm .claude/story.json"
+  "Bash|rm -rf .plans"
+  "Bash|printf '%s' 'git push' | bash"
+  "Bash|echo -n 'git push' | sh"
+  "Bash|echo 'git push' | tee /dev/stderr | sh"
+  "Bash|source <(echo git push)"
+  $'Bash|bash /dev/stdin <<\'E\'\ngit push\nE'
+  $'Bash|while read l; do $l; done <<\'E\'\ngit push\nE'
+  "Monitor|git push"
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \
-    'if $t == "Bash" or $t == "mcp__terminal__run_in_terminal" then {hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{command:$c}}
+    'if $t == "Bash" or $t == "Monitor" or $t == "mcp__terminal__run_in_terminal" then {hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{command:$c}}
      elif $t == "mcp__ccd_session_mgmt__clear_session" then {hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{session_id:$c}}
      else {hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{questions:[]}} end'
 }
@@ -312,7 +368,7 @@ hook role-guard.sh "$(guard_in g-implement Bash "${subst}")"; [[ "${out}" == *de
 for c in "git status" "git commit -m x" "az repos pr show --id 5" "az repos pr list" "az repos pr reviewer list --id 5" "az boards work-item show --id 577" "az boards work-item relation show --id 5" "git log --oneline"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
-for c in "echo gh pr create" "git commit -m \"do not git push\"" "command -v git" "grep -rn 'gh pr create' ." "printf '%s\\n' 'git push'" "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
+for c in $'git commit -m "$(cat <<\'EOF\'\nfix: don\'t push (nested\nand a backtick ` here\nEOF\n)"' "gh api graphql" "gh repo clone o/r" "gh run view 5" "gh release list" "az -o json boards work-item show --id 5" "az rest --method get --url x" "az pipelines runs list" "timeout 60 dotnet test" "find . -name '*.md' -exec grep -l foo {} +" "ls | xargs wc -l" "\$HOME/bin/tool x" "cd backend && dotnet test" "rm -rf /tmp/x" "cat .plans/.sessions/x.json" "echo \$((1<<3))" "git rebase -i HEAD~2" "git submodule update" "git config user.name" "echo gh pr create" "git commit -m \"do not git push\"" "command -v git" "grep -rn 'gh pr create' ." "printf '%s\\n' 'git push'" "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
 # 4g. guard.deny: Perl regexes from the config, matched like the built-in rules
@@ -325,6 +381,8 @@ for c in "terraform 'apply'" "curl -X POST \"https://api.prod.example.com/x\"" "
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")" STORY_CONFIG="${tmp}/guard.json"
   [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "guard.deny: matches the unquoted words of ${c}" || fail "guard.deny: quoting hid ${c}" "${out}"
 done
+hook role-guard.sh "$(guard_in g-implement Bash $'git commit -m "fix\nterraform apply is slow"')" STORY_CONFIG="${tmp}/guard.json"
+[ -z "${out}" ] && pass "guard.deny: ^ anchors the command, not a line inside an argument" || fail "guard.deny: a line of an argument matched ^" "${out}"
 for c in "terraform plan" "git commit -m 'terraform apply later'" "make test"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")" STORY_CONFIG="${tmp}/guard.json"
   [ -z "${out}" ] && pass "guard.deny: a child may run ${c}" || fail "guard.deny: false positive on ${c}" "${out}"
@@ -722,7 +780,10 @@ denied_tools=(mcp__ccd_pr__bind_pr mcp__ccd_pr__set_auto_merge mcp__ccd_pr__unbi
   mcp__ccd_session_mgmt__archive_session mcp__ccd_session_mgmt__unarchive_session mcp__ccd_session_mgmt__delete_session mcp__ccd_session_mgmt__stop_session
   mcp__ccd_session_mgmt__detach_session mcp__ccd_session_mgmt__send_message mcp__ccd_session_mgmt__set_remote_control
   mcp__ccd_session_mgmt__set_session_model mcp__ccd_session_mgmt__set_session_effort mcp__ccd_session_mgmt__set_session_permission_mode
-  mcp__ccd_host__sync_with_base_branch mcp__ccd_host__discard_kept_worktree mcp__ccd_host__clean_up_worktrees)
+  mcp__ccd_host__sync_with_base_branch mcp__ccd_host__discard_kept_worktree mcp__ccd_host__clean_up_worktrees
+  mcp__ccd_session_mgmt__set_session_fast_mode mcp__ccd_session_mgmt__set_session_output_style mcp__ccd_settings__set_setting
+  mcp__ccd_connectors__set_session_connector_enabled mcp__scheduled-tasks__create_scheduled_task mcp__scheduled-tasks__run_scheduled_task
+  mcp__scheduled-tasks__update_scheduled_task mcp__scheduled-tasks__delete_scheduled_task mcp__playwright__playwright_post mcp__playwright__playwright_delete)
 open_tools=(mcp__ccd_pr__get_status mcp__ccd_turn__update_plan mcp__ccd_turn__wrap_up mcp__ccd_session_mgmt__list_sessions mcp__ccd_session_mgmt__get_session mcp__filesystem__read_file)
 for t in "${denied_tools[@]}"; do
   hook role-guard.sh "$(mcp_in g-implement "${t}" other)"
@@ -732,7 +793,6 @@ for t in "${denied_tools[@]}"; do
     [ -z "${out}" ] && [ "${code}" -eq 0 ] || fail "mcp: ${who} was stopped on ${t}" "${out}"
   done
 done
-pass "mcp: the orchestrator and an unbound session pass every denied tool"
 for t in "${open_tools[@]}"; do
   hook role-guard.sh "$(mcp_in g-implement "${t}")"
   [ -z "${out}" ] && pass "mcp: a child may call ${t}" || fail "mcp: a child was denied ${t}" "${out}"
@@ -747,6 +807,21 @@ for id in g-orchestrator ""; do
 done
 hook role-guard.sh "$(mcp_in g-implement mcp__ccd_session_mgmt__set_session_title local_h7)" CLAUDE_CODE_HOST_SESSION_ID=local_h7
 [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "mcp: a host id that is not the binding key does not count as own" || fail "mcp: an unbound host id counted as own" "${out}"
+# MCP file tools: a write under the binding folder or to the repo config is denied, other paths pass.
+for t in mcp__filesystem__write_file mcp__filesystem__edit_file mcp__filesystem__move_file; do
+  for f in "${plans}/.sessions/g-plan.json" ".plans/.SESSIONS/x.json" ".claude/story.json" "${tmp}/repo/.claude/settings.local.json"; do
+    hook role-guard.sh "$(jq -cn --arg t "${t}" --arg f "${f}" '{hook_event_name:"PreToolUse",session_id:"g-implement",tool_name:$t,tool_input:{path:$f,destination:$f,content:"x"}}')"
+    [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "mcp: a child is denied ${t} on ${f##*/}" || fail "mcp: a child may ${t} on ${f}" "${out}"
+  done
+  hook role-guard.sh "$(jq -cn --arg t "${t}" --arg f "${tmp}/notes.md" '{hook_event_name:"PreToolUse",session_id:"g-implement",tool_name:$t,tool_input:{path:$f,content:"x"}}')"
+  [ -z "${out}" ] && pass "mcp: a child may ${t} on another file" || fail "mcp: a child was denied ${t} on another file" "${out}"
+done
+hook role-guard.sh "$(jq -cn --arg f "${plans}/.sessions/g-plan.json" '{hook_event_name:"PreToolUse",session_id:"g-implement",tool_name:"mcp__filesystem__read_file",tool_input:{path:$f}}')"
+[ -z "${out}" ] && pass "mcp: a child may read a binding file with a read tool" || fail "mcp: a read tool was denied" "${out}"
+for f in "${plans}/.SESSIONS/g-plan.json" ".claude/story.json" ".claude/settings.json"; do
+  hook role-guard.sh "$(jq -cn --arg f "${f}" '{hook_event_name:"PreToolUse",session_id:"g-plan",tool_name:"Write",tool_input:{file_path:$f,content:"{}"}}')"
+  [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "role-guard: a child Write to ${f##*/} is denied (case-insensitive)" || fail "role-guard: a child may Write ${f}" "${out}"
+done
 printf '{"guard": {"denyTools": ["mcp__github__.*", "mcp__ccd_turn__wrap_up"]}}\n' >"${tmp}/tools.json"
 for t in mcp__github__create_issue mcp__ccd_turn__wrap_up; do
   hook role-guard.sh "$(mcp_in g-implement "${t}")" STORY_CONFIG="${tmp}/tools.json"

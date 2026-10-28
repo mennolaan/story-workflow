@@ -11,7 +11,7 @@
         ]
       },
       {
-        "matcher": "AskUserQuestion|Bash|Edit|Write|NotebookEdit|mcp__.*",
+        "matcher": "AskUserQuestion|Bash|Monitor|Edit|Write|NotebookEdit|mcp__.*",
         "hooks": [
           {
             "type": "command",

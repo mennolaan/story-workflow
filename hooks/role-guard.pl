@@ -21,7 +21,7 @@
 #   issue verbs outside the read list, gh api writes, az repos pr, az boards
 #   work-item, az pipelines run and az pipelines build queue.
 # - guard.deny: each Perl regex (in STORY_GUARD_DENY, one per line) is
-#   matched with /m against the words of each simple command joined by single
+#   matched against the words of each simple command joined by single
 #   spaces, before and after the drop of VAR=value words and wrappers.
 # - A write to the binding folder (STORY_SESSIONS_DIR, or any path with a
 #   .sessions segment): rm, mv, cp, tee, truncate, ln, sed -i, and > or >>.
@@ -33,7 +33,7 @@ my $MAX_DEPTH = 8;
 my $SESSIONS = $ENV{STORY_SESSIONS_DIR} // '';
 my @deny;
 for my $re (grep { length } split /\n/, ($ENV{STORY_GUARD_DENY} // '')) {
-  my $q = eval { qr/$re/m };
+  my $q = eval { qr/$re/ };
   if (!defined $q) {
     (my $e = $@) =~ s/ at \S+ line \d+.*//s;
     print "bad\t$re\t$e\n";
@@ -45,15 +45,50 @@ for my $re (grep { length } split /\n/, ($ENV{STORY_GUARD_DENY} // '')) {
 
 sub newcmd { return { words => [], redirs => [], heredocs => [], herestrings => [], nested => [], pipe => 0 }; }
 
-# read_subst: from just after "$(" or "<(" to the matching ")". Returns the inner text.
+# read_subst: from just after "$(" or "<(" to the matching ")". Returns the inner
+# text. $arith is true for $(( ... )): no heredocs and no comments there. It
+# skips heredoc bodies and # comments, so a ) or a quote in them does not end
+# the substitution early, as in git commit -m "$(cat <<'EOF' ... EOF )".
 sub read_subst {
-  my ($s, $ip) = @_;
+  my ($s, $ip, $arith) = @_;
   my $depth = 1;
   my $start = $$ip;
   my $n = length $s;
+  my @pend;
+  my $wordstart = 1;
   while ($$ip < $n) {
     my $ch = substr($s, $$ip, 1);
-    if ($ch eq '\\') { $$ip += 2; next; }
+    if ($ch eq "\n" && !$arith) {
+      $$ip++;
+      for my $h (@pend) {
+        my ($delim, $dash) = @$h;
+        while ($$ip < $n) {
+          my $end = index($s, "\n", $$ip);
+          my $line = $end < 0 ? substr($s, $$ip) : substr($s, $$ip, $end - $$ip);
+          $$ip = $end < 0 ? $n : $end + 1;
+          my $t = $dash ? ($line =~ s/^\t+//r) : $line;
+          last if $t eq $delim;
+        }
+      }
+      @pend = ();
+      $wordstart = 1;
+      next;
+    }
+    if ($ch eq '#' && $wordstart && !$arith) {
+      my $e = index($s, "\n", $$ip);
+      $$ip = $e < 0 ? $n : $e;
+      next;
+    }
+    if ($ch eq '<' && !$arith && substr($s, $$ip, 3) ne '<<<' && substr($s, $$ip, 2) eq '<<') {
+      if (substr($s, $$ip) =~ /\A<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/) {
+        push @pend, [$3, $1 eq '-'];
+        $$ip += length $&;
+        $wordstart = 0;
+        next;
+      }
+    }
+    $wordstart = ($ch =~ /[\s;&|(]/) ? 1 : 0;
+    if ($ch eq '\\') { $$ip += 2; $wordstart = 0; next; }
     if ($ch eq "'") {
       my $end = index($s, "'", $$ip + 1);
       die "an unclosed single quote\n" if $end < 0;
@@ -107,7 +142,7 @@ sub read_dq {
     }
     if ($ch eq '`') { push @{$cmd->{nested}}, read_backtick($s, $ip); $out .= '`...`'; next; }
     if ($ch eq '$' && substr($s, $$ip + 1, 1) eq '(') {
-      if (substr($s, $$ip + 2, 1) eq '(') { $$ip += 2; read_subst($s, $ip); $out .= '$((...))'; next; }
+      if (substr($s, $$ip + 2, 1) eq '(') { $$ip += 3; read_subst($s, $ip, 1); $out .= '$((...))'; next; }
       $$ip += 2;
       push @{$cmd->{nested}}, read_subst($s, $ip);
       $out .= '$(...)';
@@ -183,7 +218,7 @@ sub lex {
     if ($ch eq '$') {
       my $nx = substr($s, $i + 1, 1);
       if ($nx eq '(') {
-        if (substr($s, $i + 2, 1) eq '(') { $i += 2; read_subst($s, \$i); $word .= '$((...))'; $inword = 1; next; }
+        if (substr($s, $i + 2, 1) eq '(') { $i += 3; read_subst($s, \$i, 1); $word .= '$((...))'; $inword = 1; next; }
         $i += 2;
         push @{$cur->{nested}}, read_subst($s, \$i);
         $word .= '$(...)';
@@ -284,37 +319,59 @@ sub lex {
 }
 
 my %KEYWORD = map { $_ => 1 } qw(! { } if then else elif fi do done while until in);
-my %WRAPPER = map { $_ => 1 } qw(env command exec nohup time sudo xargs builtin);
+my %WRAPPER = map { $_ => 1 } qw(env command exec nohup time sudo xargs builtin noglob nocorrect nice timeout setsid
+  stdbuf ionice flock caffeinate doas chronic watch repeat);
 my %OPTARG = (
-  env => { map { $_ => 1 } qw(-u --unset -C --chdir -S --split-string) },
+  env => { map { $_ => 1 } qw(-u --unset -C --chdir -P) },
   sudo => { map { $_ => 1 } qw(-u --user -g --group -C --close-from -D --chdir -h --host -p --prompt -r --role -t --type -U --other-user -T --command-timeout) },
-  xargs => { map { $_ => 1 } qw(-I -n -L -l -P -d -E -e -s -a --max-args --max-lines --max-procs --delimiter --eof --max-chars --arg-file --replace) },
+  xargs => { map { $_ => 1 } qw(-I -J -n -L -l -P -d -E -e -s -a --max-args --max-lines --max-procs --delimiter --eof --max-chars --arg-file --replace) },
   exec => { '-a' => 1 },
+  nice => { '-n' => 1 }, timeout => { map { $_ => 1 } qw(-k -s --kill-after --signal) },
+  stdbuf => { map { $_ => 1 } qw(-i -o -e) }, ionice => { map { $_ => 1 } qw(-c -n -p -P -t) },
+  doas => { map { $_ => 1 } qw(-u -C) }, caffeinate => { map { $_ => 1 } qw(-t -w) },
+  watch => { map { $_ => 1 } qw(-n -d --interval) }, flock => { map { $_ => 1 } qw(-w -E) },
 );
+my %POSITIONAL = (timeout => 1, flock => 1, repeat => 1);
+my ($DYN, $VIA_XARGS);
 
 sub base { my ($w) = @_; $w =~ s{.*/}{}; return $w; }
 
 # normalize: argv without leading VAR=value words, keywords and wrappers.
-# An empty list means the command runs nothing (command -v git).
+# An empty list means the command runs nothing (command -v git). It sets $DYN
+# to a command word that the guard cannot read (a variable, a substitution,
+# a brace list or =cmd) and $VIA_XARGS when xargs supplies the arguments.
 sub normalize {
   my @w = @_;
+  ($DYN, $VIA_XARGS) = (undef, 0);
   while (@w) {
     if ($w[0] =~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/ || $KEYWORD{$w[0]}) { shift @w; next; }
+    if ($w[0] eq 'function' || $w[0] eq 'coproc') { shift @w; shift @w if @w > 1; next; }
     my $b = base($w[0]);
     last unless $WRAPPER{$b};
+    $VIA_XARGS = 1 if $b eq 'xargs';
     shift @w;
     while (@w && $w[0] =~ /^-/) {
       my $o = shift @w;
       last if $o eq '--';
       return () if $b eq 'command' && $o =~ /^-[pvV]*[vV]/;
+      if ($b eq 'env' && ($o =~ /^-S(.*)$/s || $o =~ /^--split-string(?:=(.*))?$/s)) {
+        my $str = (defined $1 && length $1) ? $1 : shift(@w) // '';
+        unshift @w, grep { length } split /\s+/, $str;
+        next;
+      }
       shift @w if $OPTARG{$b} && $OPTARG{$b}{$o} && @w;
     }
+    splice(@w, 0, $POSITIONAL{$b}) if $POSITIONAL{$b};
   }
-  $w[0] = base($w[0]) if @w;
+  if (@w) {
+    my $f = $w[0];
+    $DYN = $f if ($f =~ /^[\$`=]/ && $f !~ m{^\$\{?[A-Za-z_]\w*\}?/}) || $f =~ /\{[^{}]*,[^{}]*\}/;
+    $w[0] = base($w[0]);
+  }
   return @w;
 }
 
-my %SHELL = map { $_ => 1 } qw(bash sh zsh dash ksh);
+my %SHELL = map { $_ => 1 } qw(bash sh zsh dash ksh fish csh tcsh ash mksh rbash su script);
 
 # shell_script: for a shell argv, (1, script) with -c, (0) when it reads stdin,
 # or () when it runs a script file.
@@ -330,19 +387,61 @@ sub shell_script {
     $c = 1 if $o =~ /^-[A-Za-z]*c/;
   }
   return (1, $w[0] // '') if $c;
-  return (0) if !@w || $w[0] eq '-s';
+  return (0) if !@w || $w[0] eq '-s' || $w[0] eq '/dev/stdin';
   return ();
 }
 
-sub under_sessions {
+# protected: a path the child never writes: a .sessions folder (case-insensitive,
+# globs included), the repo config and the settings files.
+sub protected {
   my ($p) = @_;
-  return 1 if $p =~ m{(?:^|/)\.sessions(?:/|$)};
-  return 1 if length $SESSIONS && index($p, $SESSIONS) == 0;
+  $p = lc $p;
+  return 1 if length $SESSIONS && index($p, lc $SESSIONS) == 0;
+  return 1 if $p =~ m{(?:^|/)\.claude/(?:story\.json|settings(?:\.local)?\.json)$};
+  for my $seg (split m{/}, $p) {
+    return 1 if $seg eq '.sessions';
+    next unless $seg =~ /[*?\[]/;
+    (my $re = quotemeta $seg) =~ s/\\\*/.*/g;
+    $re =~ s/\\\?/./g;
+    $re =~ s/\\\[(.*?)\\\]/[$1]/g;
+    return 1 if eval { '.sessions' =~ /^$re$/ };
+  }
   return 0;
 }
 
 my %GH_PR_READ = map { $_ => 1 } qw(view list diff checks status checkout);
 my %GH_ISSUE_READ = map { $_ => 1 } qw(view list status);
+my %GH_MUTATING = map { $_ => 1 } qw(create delete edit set rename run rerun cancel enable disable transfer archive
+  unarchive fork import install upgrade remove lock unlock pin unpin develop sync deploy add update);
+my %AZ_MUTATING = map { $_ => 1 } qw(create delete update add remove set run queue import approve);
+my %WRITER = map { $_ => 1 } qw(rm mv cp tee truncate ln unlink install dd touch chmod chown rsync rmdir);
+my $DYNAMIC = qr/[\$`{}]/;
+
+# gh_api: deny reason for a gh api call, or undef. Reads the option clusters (-iXPOST, -if).
+sub gh_api {
+  my @a = @_;
+  my ($method, $field);
+  for (my $j = 0; $j < @a; $j++) {
+    my $o = $a[$j];
+    if ($o eq '--method') { $method = $a[$j + 1] // ''; $j++; }
+    elsif ($o =~ /^--method=(.*)$/) { $method = $1; }
+    elsif ($o =~ /^--(?:field|raw-field|input)(?:$|=)/) { $field = $o; }
+    elsif ($o =~ /^-([A-Za-z]+)(.*)$/s && $o !~ /^--/) {
+      my ($cl, $rest) = ($1, $2);
+      my @c = split //, $cl;
+      for my $k (0 .. $#c) {
+        my $c = $c[$k];
+        my $tail = join('', @c[$k + 1 .. $#c]) . $rest;
+        if ($c eq 'X') { $method = length $tail ? $tail : ($a[$j + 1] // ''); $j++ unless length $tail; last; }
+        if ($c eq 'f' || $c eq 'F') { $field = "-$c"; last; }
+        if ($c =~ /^[HpqtR]$/) { $j++ unless length $tail; last; }
+      }
+    }
+  }
+  return "run gh api $method" if defined $method && uc($method) ne 'GET';
+  return "run gh api with $field (gh sends a POST)" if defined $field && !defined $method;
+  return;
+}
 
 # rules: the built-in deny rules on one normalized argv.
 sub rules {
@@ -352,42 +451,51 @@ sub rules {
     my $i = 1;
     while ($i < @a && $a[$i] =~ /^-/) {
       my $o = $a[$i];
+      return "run git with a -c alias ($a[$i + 1])" if $o eq '-c' && ($a[$i + 1] // '') =~ /^alias\./i;
       $i += ($o =~ /^(?:-C|-c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env|--exec-path)$/) ? 2 : 1;
     }
-    return 'run git push' if ($a[$i] // '') eq 'push';
+    my $sub = $a[$i];
+    if (!defined $sub) { return $VIA_XARGS ? 'run git with arguments from xargs' : undef; }
+    return "run git with a name the guard cannot read ($sub)" if $sub =~ $DYNAMIC;
+    return 'run git push' if $sub eq 'push';
+    return "run git $sub" if $sub =~ /^(?:send-pack|http-push)$/;
+    return 'run git subtree push' if $sub eq 'subtree' && ($a[$i + 1] // '') eq 'push';
+    return 'run git config for an alias' if $sub eq 'config' && grep { /^alias\./i } @a[$i + 1 .. $#a];
     return;
   }
   if ($cmd eq 'gh') {
     my $i = 1;
     my $skip = sub { while ($i < @a && $a[$i] =~ /^-/) { my $o = $a[$i]; $i += ($o =~ /^(?:-R|--repo|--hostname)$/) ? 2 : 1; } };
     $skip->();
-    my $group = $a[$i] // '';
+    my $group = $a[$i];
+    if (!defined $group) { return $VIA_XARGS ? 'run gh with arguments from xargs' : undef; }
     $i++;
+    return "run gh with a name the guard cannot read ($group)" if $group =~ $DYNAMIC;
     if ($group eq 'pr' || $group eq 'issue') {
       $skip->();
       my $verb = $a[$i];
       return unless defined $verb;
+      return "run gh $group with a name the guard cannot read ($verb)" if $verb =~ $DYNAMIC;
       my $read = $group eq 'pr' ? \%GH_PR_READ : \%GH_ISSUE_READ;
       return "run gh $group $verb" unless $read->{$verb};
       return;
     }
-    if ($group eq 'api') {
-      my ($method, $field);
-      for (my $j = $i; $j < @a; $j++) {
-        my $o = $a[$j];
-        if ($o eq '-X' || $o eq '--method') { $method = $a[$j + 1] // ''; $j++; }
-        elsif ($o =~ /^-X(.+)$/ || $o =~ /^--method=(.*)$/) { $method = $1; }
-        elsif ($o =~ /^(?:-[fF]|--field|--raw-field|--input)(?:$|=)/ || $o =~ /^-[fF]./) { $field = $o; }
-      }
-      return "run gh api $method" if defined $method && uc($method) ne 'GET';
-      return "run gh api with $field (gh sends a POST)" if defined $field && !defined $method;
-      return;
-    }
+    return gh_api(@a[$i .. $#a]) if $group eq 'api';
+    $skip->();
+    my $verb = $a[$i];
+    return "run gh $group $verb" if defined $verb && $GH_MUTATING{$verb};
     return;
   }
   if ($cmd eq 'az') {
     my @p;
-    for my $w (@a[1 .. $#a]) { last if $w =~ /^-/; push @p, $w; }
+    my $VAL = qr/^(?:--output|-o|--query|--subscription|--organization|--org|--project|-p|--detect)$/;
+    for (my $j = 1; $j < @a; $j++) {
+      my $w = $a[$j];
+      if ($w =~ /^-/) { $j++ if $w =~ $VAL && $w !~ /=/; next; }
+      push @p, $w;
+    }
+    return 'run az with arguments from xargs' if !@p && $VIA_XARGS;
+    return "run az with a name the guard cannot read ($p[0])" if @p && grep { /$DYNAMIC/ } @p[0 .. ($#p < 2 ? $#p : 2)];
     my $g = join ' ', @p[0 .. ($#p < 1 ? $#p : 1)];
     if ($g eq 'repos pr') {
       my $sub = $p[2] // return;
@@ -403,22 +511,109 @@ sub rules {
     }
     return 'run az pipelines run' if $g eq 'pipelines run';
     return 'run az pipelines build queue' if $g eq 'pipelines build' && ($p[2] // '') eq 'queue';
+    if (($p[0] // '') =~ /^(?:pipelines|repos|boards|devops|artifacts)$/) {
+      for my $w (@p[1 .. ($#p < 3 ? $#p : 3)]) { return "run az $p[0] $w" if $AZ_MUTATING{$w}; }
+    }
+    if (($p[0] // '') eq 'rest' || $g eq 'devops invoke') {
+      for (my $j = 1; $j < @a; $j++) {
+        my $m = $a[$j] =~ /^(?:--method|-m|--http-method)$/ ? ($a[$j + 1] // '') : $a[$j] =~ /^--(?:method|http-method)=(.*)$/ ? $1 : next;
+        return "run az $g with the method $m" if uc($m) ne 'GET';
+      }
+    }
     return;
   }
-  if ($cmd =~ /^(?:rm|mv|cp|tee|truncate|ln|unlink|install)$/ || ($cmd eq 'sed' && grep { /^-[A-Za-z]*i|^--in-place/ } @a[1 .. $#a])) {
+  if ($cmd eq 'cd' || $cmd eq 'pushd') {
+    return "enter the binding folder ($cmd $a[1]). Only story-bind.sh of the orchestrator changes it" if defined $a[1] && protected($a[1]);
+    return;
+  }
+  my $sedi = $cmd eq 'sed' && grep { /^-[A-Za-z]*i|^--in-place/ } @a[1 .. $#a];
+  if ($WRITER{$cmd} || $sedi || ($cmd eq 'find' && grep { $_ eq '-delete' } @a)) {
     for my $w (@a[1 .. $#a]) {
-      return "change the binding files ($cmd $w). Only story-bind.sh of the orchestrator does that" if under_sessions($w);
+      (my $path = $w) =~ s/^of=//;
+      return "change the binding files or the repo config ($cmd $w). Only story-bind.sh of the orchestrator does that" if protected($path);
+      return "remove the plans folder ($cmd $w)" if $cmd =~ /^(?:rm|mv|rmdir|unlink)$/ && $path =~ m{(?:^|/)\.plans/?$};
     }
   }
   return;
 }
 
-sub printf_text {
+# feed_text: the text that an echo or printf command writes.
+sub feed_text {
   my @w = @_;
-  my $t = join ' ', @w;
+  my $cmd = shift @w;
+  my $t;
+  if ($cmd eq 'echo') {
+    shift @w while @w && $w[0] =~ /^-[neE]+$/;
+    $t = join ' ', @w;
+  } else {
+    my $fmt = shift(@w) // '';
+    my $i = 0;
+    $fmt =~ s/%[sb]/ $i < @w ? $w[$i++] : '' /ge;
+    $t = join ' ', $fmt, @w[$i .. $#w];
+  }
   $t =~ s/\\n/\n/g;
+  $t =~ s/\\x([0-9a-fA-F]{2})/chr(hex($1))/ge;
   return $t;
 }
+
+# check_argv: the verdict for one command that runs as argv (after normalize).
+sub check_argv {
+  my ($c, $k, $cmds, $depth, @argv) = @_;
+  my $b = $argv[0];
+  if ($b eq 'eval') {
+    return analyse(join(' ', @argv[1 .. $#argv]), $depth + 1);
+  }
+  if ($b eq 'emulate') {
+    for my $j (1 .. $#argv - 1) { return analyse($argv[$j + 1], $depth + 1) if $argv[$j] eq '-c'; }
+    return;
+  }
+  if ($b eq 'source' || $b eq '.' || $SHELL{$b}) {
+    return "deny\trun a script from a process substitution that the guard cannot see ($b)" if grep { $_ eq 'PROCESS' } @argv[1 .. $#argv];
+    my @sh = $b eq 'source' || $b eq '.' ? ((grep { $_ eq '/dev/stdin' } @argv) ? (0) : ()) : shell_script(@argv);
+    if (@sh && $sh[0]) { return analyse($sh[1], $depth + 1); }
+    if (@sh) {
+      my @feed = (map({ $_->{body} } @{$c->{heredocs}}), @{$c->{herestrings}});
+      my $m = $k;
+      while ($m > 0 && $cmds->[$m - 1]{pipe}) {
+        my $p = $cmds->[$m - 1];
+        push @feed, map({ $_->{body} } @{$p->{heredocs}}), @{$p->{herestrings}};
+        my @pa = normalize(@{$p->{words}});
+        push @feed, feed_text(@pa) if @pa && $pa[0] =~ /^(?:echo|printf)$/;
+        last unless @pa && $pa[0] =~ /^(?:cat|tee)$/;
+        $m--;
+      }
+      for my $f (@feed) { my $r = analyse($f, $depth + 1); return $r if defined $r; }
+    }
+    return;
+  }
+  if ($b eq 'find') {
+    for (my $j = 1; $j < @argv; $j++) {
+      next unless $argv[$j] =~ /^-(?:exec|execdir|ok|okdir)$/;
+      my @sub;
+      for (my $m = $j + 1; $m < @argv && $argv[$m] ne ';' && $argv[$m] ne '+'; $m++) { push @sub, $argv[$m]; }
+      my @n = normalize(@sub);
+      if (defined $DYN) { return "deny\trun a command whose name the guard cannot read ($DYN)"; }
+      if (@n) { my $r = check_argv($c, $k, $cmds, $depth, @n); return $r if defined $r; my $d = rules(@n); return "deny\t$d" if defined $d; }
+    }
+  }
+  if ($b eq 'git') {
+    my %RUNS = map { $_ => 1 } qw(foreach run);
+    for my $j (1 .. $#argv - 1) {
+      my $w = $argv[$j];
+      if (($w eq '-x' || $w eq '--exec') && ($argv[1] // '') =~ /^(?:rebase|difftool)$/ || $w =~ /^--exec=(.*)$/) {
+        my $r = analyse($w =~ /^--exec=(.*)$/ ? $1 : $argv[$j + 1], $depth + 1); return $r if defined $r;
+      }
+      if ($RUNS{$w} && ($argv[$j - 1] // '') =~ /^(?:submodule|bisect)$/) {
+        my $r = analyse(join(' ', @argv[$j + 1 .. $#argv]), $depth + 1); return $r if defined $r;
+      }
+    }
+  }
+  my $r = rules(@argv);
+  return "deny\t$r" if defined $r;
+  return;
+}
+
+my $ASSIGN = qr/^(?:CLAUDE_CODE_[A-Z0-9_]+|STORY_[A-Z0-9_]+|CLAUDE_PROJECT_DIR|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT)=/;
 
 sub analyse {
   my ($script, $depth) = @_;
@@ -437,41 +632,24 @@ sub analyse {
     }
     for my $sub (@nested) { my $r = analyse($sub, $depth + 1); return $r if defined $r; }
     for my $r (@{$c->{redirs}}) {
-      return "deny\twrite to the binding files ($r->[0] $r->[1]). Only story-bind.sh of the orchestrator does that"
-        if $r->[0] =~ /^>/ && under_sessions($r->[1]);
+      return "deny\twrite to the binding files or the repo config ($r->[0] $r->[1]). Only story-bind.sh of the orchestrator does that"
+        if $r->[0] =~ /^>/ && protected($r->[1]);
     }
-    my @argv = normalize(@{$c->{words}});
+    for my $w (@{$c->{words}}) {
+      next unless $w =~ $ASSIGN;
+      (my $name = $w) =~ s/=.*//s;
+      return "deny\tset $name in a command. The session identity and the story variables belong to the harness";
+    }
     for my $d (@deny) {
-      for my $text (join(' ', @{$c->{words}}), join(' ', @argv)) {
+      for my $text (join(' ', @{$c->{words}}), join(' ', normalize(@{$c->{words}}))) {
         return "deny\trun a command that matches the guard.deny entry $d->[0]" if length $text && $text =~ $d->[1];
       }
     }
+    my @argv = normalize(@{$c->{words}});
+    return "deny\trun a command whose name the guard cannot read ($DYN)" if defined $DYN;
     next unless @argv;
-    my $b = $argv[0];
-    if ($b eq 'eval') {
-      my $r = analyse(join(' ', @argv[1 .. $#argv]), $depth + 1);
-      return $r if defined $r;
-      next;
-    }
-    if ($SHELL{$b}) {
-      my @sh = shell_script(@argv);
-      if (@sh && $sh[0]) {
-        my $r = analyse($sh[1], $depth + 1);
-        return $r if defined $r;
-      } elsif (@sh) {
-        my @feed = (map({ $_->{body} } @{$c->{heredocs}}), @{$c->{herestrings}});
-        if ($k > 0 && $cmds->[$k - 1]{pipe}) {
-          my $p = $cmds->[$k - 1];
-          push @feed, map({ $_->{body} } @{$p->{heredocs}}), @{$p->{herestrings}};
-          my @pa = normalize(@{$p->{words}});
-          push @feed, printf_text(@pa[1 .. $#pa]) if @pa && $pa[0] =~ /^(?:echo|printf)$/;
-        }
-        for my $f (@feed) { my $r = analyse($f, $depth + 1); return $r if defined $r; }
-      }
-      next;
-    }
-    my $r = rules(@argv);
-    return "deny\t$r" if defined $r;
+    my $r = check_argv($c, $k, $cmds, $depth, @argv);
+    return $r if defined $r;
   }
   return;
 }

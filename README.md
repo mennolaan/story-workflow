@@ -92,6 +92,10 @@ The matrix exits 0 when every case passes. Each gate has a case that fails witho
 
 ## Known limits
 
-- The role guard is a deny list, not a sandbox. A child session can still write the binding files with a script in another language, for example `python3 -c`. It does not know an MCP tool that is not in its list, so name such tools in `guard.denyTools`.
+- The role guard is a deny list, not a sandbox. It reads shell words, so quoting, wrappers (`env`, `sudo`, `timeout`, `find -exec` and others), `bash -c`, `eval` and heredocs do not hide a verb. It denies a command whose name it cannot read (`$x push`, `{git,push}`). It cannot see what a script does: a child can still run `git push` or write the binding files from a script in another language (`python3 -c`), or from a script file that it wrote first. Treat the guard as a stop for mistakes, not for a determined session.
+- `story-bind.sh` takes the identity of the caller from `CLAUDE_CODE_HOST_SESSION_ID` and `CLAUDE_CODE_SESSION_ID`. The guard denies a child any command that sets `CLAUDE_CODE_*`, `STORY_*`, `CLAUDE_PROJECT_DIR` or `CLAUDE_CONFIG_DIR`, so a child cannot act as its orchestrator. A script in another language can still set them.
+- The guard does not know an MCP tool that is not in its list. Name such tools in `guard.denyTools`, for example the browser servers (`mcp__claude-in-chrome__.*`, `mcp__Claude_Browser__.*`), which can click through a PR page.
+- `gh api graphql` is a POST for gh, so the guard denies it for a child. A review session that needs review threads asks the orchestrator.
+- Bash and zsh differ in rare syntax. The guard parses bash-like syntax and denies a command that it cannot parse.
 - The backstop check reads `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and the user, project, local and managed settings files. It does not see `--settings`, `--autocompact`, server-managed settings or the managed settings of an embedding host.
 - Mod modules are early access, and their API can change between Claude Code releases. Run the checks after you update Claude Code.
