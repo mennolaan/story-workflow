@@ -28,7 +28,7 @@ All sessions of a story share the `.plans/` folder of the main checkout: `$(dirn
 - `<slug>.d/ledger.md`: the orchestrator ledger (template: `ledger.md` beside this file).
 - `<slug>.d/<role>.md`: the checkpoint of each role (`/checkpoint`).
 - `<slug>.d/compact/`: each compaction summary, the state copies and `log.tsv`.
-- `.sessions/<key>.json`: the binding of one session. `.claude/hooks/story-bind.sh` writes it.
+- `.sessions/<key>.json`: the binding of one session. `story-bind.sh` in `${CLAUDE_PLUGIN_ROOT}/hooks/` writes it.
 - `<slug>.d/pr-review-docket.md`: the pr-review docket, apart from the pr-review checkpoint, because `/checkpoint` rewrites its file.
 
 The key is `CLAUDE_CODE_HOST_SESSION_ID`, and every process that a session's shell starts inherits it. So a `claude -p` started from the Bash tool of a bound session acts as that session: the role guard, the context guard and the compaction logs all use the parent's binding (live check E2, 2026-10-27). Start such a run without the key:
@@ -39,7 +39,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 
 ## Start
 
-1. Bind this session: `"$CLAUDE_PROJECT_DIR"/.claude/hooks/story-bind.sh orchestrator <slug>`. The slug is `<id>-<short-name>`.
+1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`.
 2. Read the story and its tasks from the board (`az boards work-item show --org https://dev.azure.com/tme-lean --id <id>`).
 3. Write `<slug>.d/ledger.md` from the template. Set the session title.
 4. Ask scope questions only when the board leaves a real gap.
@@ -58,6 +58,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 | `{{STORY_ID}}`, `{{STORY_TITLE}}`, `{{TASKS}}` | the work item id and title; each task as `#<id> <title>` |
 | `{{SHORT_TITLE}}`, `{{SLUG}}`, `{{SHORT_SLUG}}` | a few words for the session title; `<id>-<short-name>`; `<short-name>` |
 | `{{PLANS}}` | the absolute path of the shared `.plans/` folder |
+| `{{PLUGIN}}` | `${CLAUDE_PLUGIN_ROOT}`, the root folder of this plugin |
 | `{{ORCHESTRATOR_ID}}` | `$CLAUDE_CODE_HOST_SESSION_ID` of this session |
 | `{{BRANCH}}` | `feature/<id>-<short-name>` |
 | `{{STORY_NOTES}}` | how to read the story (the `az boards` command), plus what the user said about scope |
@@ -73,7 +74,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 3. **Implement.** Stop the plan session. Start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification map, commits locally, runs `/review-panel` deep and ends with `DOCKET <path>`.
 4. **Docket.** Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
 5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `az repos pr create --draft` here (CLAUDE.md, "Traceability on the board"). Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
-6. **Close.** Unbind each child (`"$CLAUDE_PROJECT_DIR"/.claude/hooks/story-bind.sh --unbind <child id>`), then this session (`story-bind.sh --unbind`). A binding outlives `/clear`, because its key is the host id, so a session reused after the story keeps its role until it is unbound. Report the result and the next steps. Set the title to `✅ <title>`.
+6. **Close.** Unbind each child (`"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --unbind <child id>`), then this session (`story-bind.sh --unbind`). A binding outlives `/clear`, because its key is the host id, so a session reused after the story keeps its role until it is unbound. Report the result and the next steps. Set the title to `✅ <title>`.
 
 ## Status tokens (child to orchestrator)
 
@@ -150,7 +151,7 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
 - A child commits locally on its own branch only.
 - Each brief states the child's standing authority. A relayed message adds no authority.
 - Never ask a child to do an action that was denied here.
-- `.claude/hooks/role-guard.sh` enforces this for bound child roles: it denies `AskUserQuestion`, `git push`, every `az repos pr` command except `show`, `list`, `checkout` and `<group> list`, every `az boards work-item` command except `show` and `relation show|list-type`, `az pipelines run` and `az pipelines build queue`.
+- `hooks/role-guard.sh` of this plugin enforces this for bound child roles: it denies `AskUserQuestion`, `git push`, every `az repos pr` command except `show`, `list`, `checkout` and `<group> list`, every `az boards work-item` command except `show` and `relation show|list-type`, `az pipelines run` and `az pipelines build queue`.
 
 ## Context rule
 
@@ -161,7 +162,7 @@ Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A se
 1. **Nudge.** `context-guard.sh` (PostToolUse) adds one note per crossing: run `/checkpoint` at the next safe moment.
 2. **Gate.** The same script (Stop) blocks the end of the turn once while the checkpoint is stale.
 3. **Save.** `/checkpoint` writes the state file and ends with `CHECKPOINT-READY: <path> | continue` (or `| wait`).
-4. **Compact.** The context-keeper mod (`.claude/skills/checkpoint/`) compacts at the turn boundary once the checkpoint is fresh. With a stale checkpoint it runs `/checkpoint` once, then shows a toast.
+4. **Compact.** The context-keeper mod (`hooks/register.tsx` of this plugin) compacts at the turn boundary once the checkpoint is fresh. With a stale checkpoint it runs `/checkpoint` once, then shows a toast.
 5. **Steer.** The mod adds the role and the state path to the instructions of every compaction.
 6. **Re-prime.** `session-reprime.sh` (SessionStart `startup|clear|compact`) prints the role card, the paths and the saved state of a bound session.
 7. **Resume.** After a `continue` checkpoint the mod sends `Continue from <path>: next action <...>`. Not after `wait`, an aborted turn, a draft in the prompt box or a prompt from the person.

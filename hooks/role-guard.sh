@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Code PreToolUse (AskUserQuestion|Bash): a bound child session (plan,
 # implement, pr-review) does not ask the user and does not act outward. Only
-# the orchestrator does (.claude/skills/story/SKILL.md, "Authority").
+# the orchestrator does (skills/story/SKILL.md, "Authority").
 # Denied for a child role:
 #   AskUserQuestion
 #   git push

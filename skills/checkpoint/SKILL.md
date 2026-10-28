@@ -10,8 +10,8 @@ Save the state of this session while you still hold the context. No hook can mak
 ## 1. Find the target
 
 ```bash
-"$CLAUDE_PROJECT_DIR"/.claude/hooks/story-bind.sh --state
-"$CLAUDE_PROJECT_DIR"/.claude/hooks/story-bind.sh --show
+"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --state
+"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --show
 ```
 
 - `--state` prints the path. A bound session writes `<plans>/<slug>.d/<role>.md`. An unbound session writes `<plans>/.sessions/<key>.md`.
@@ -61,4 +61,4 @@ CHECKPOINT-READY: <absolute path of this file> | continue
 
 - Read the file back once. Check the line count and the sentinel.
 - Finish the turn as planned. The context-keeper mod compacts at the turn boundary. Without the mod, the backstop compacts later, at about 400k tokens (40% of a 1M window).
-- A child session ends its turn with `wrap_up`, recap first line `CHECKPOINT`. Before `wrap_up`, a story session sets its title to 💾 `CHECKPOINT` plus `<Role> · <story id> <short name>` (`.claude/skills/story/SKILL.md`, "Session title states").
+- A child session ends its turn with `wrap_up`, recap first line `CHECKPOINT`. Before `wrap_up`, a story session sets its title to 💾 `CHECKPOINT` plus `<Role> · <story id> <short name>` (`${CLAUDE_PLUGIN_ROOT}/skills/story/SKILL.md`, "Session title states").

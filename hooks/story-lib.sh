@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared functions for the story hooks. Source it; it runs nothing.
-# Procedure: .claude/skills/story/SKILL.md ("Files", "Context rule").
+# Procedure: skills/story/SKILL.md ("Files", "Context rule").
 # All sessions of a story share one folder: the .plans/ folder of the main
 # checkout, the parent of the git common dir. A binding file in
 # .plans/.sessions/ names the role and the story of one session. Its key is
@@ -172,5 +172,5 @@ story_card() {
 }
 
 story_protocol_line() {
-  printf 'Protocol: end every turn with wrap_up. The first line of the recap is one token: PHASE DONE #<task> <sha>, PLAN READY <path>, QUESTION, DOCKET <path>, READY FOR LIVE CHECKS <branch> <sha>, READY TO PUSH <branch> <sha>, BLOCKED, CHECKPOINT or DONE. Set the title emoji for that token before wrap_up (map: .claude/skills/story/SKILL.md). A question goes to the orchestrator with SendMessage, never to the user.\n'
+  printf 'Protocol: end every turn with wrap_up. The first line of the recap is one token: PHASE DONE #<task> <sha>, PLAN READY <path>, QUESTION, DOCKET <path>, READY FOR LIVE CHECKS <branch> <sha>, READY TO PUSH <branch> <sha>, BLOCKED, CHECKPOINT or DONE. Set the title emoji for that token before wrap_up (map: %s/skills/story/SKILL.md). A question goes to the orchestrator with SendMessage, never to the user.\n' "${CLAUDE_PLUGIN_ROOT:-the story-workflow plugin}"
 }

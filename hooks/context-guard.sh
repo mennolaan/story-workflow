@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code PostToolUse (*) and Stop: the save half of the 35% context rule.
-# Procedure: .claude/skills/story/SKILL.md ("Context rule"), config in
+# Procedure: skills/story/SKILL.md ("Context rule"), config in
 # .claude/skills/story/config.json (checkpointPercent).
 #
 # The context size is the last main-chain assistant line of the transcript:
@@ -13,7 +13,7 @@
 #   PostToolUse: one additionalContext nudge per crossing while it is stale.
 #   Stop: one block per crossing while it is stale. stop_hook_active passes.
 # Below the threshold the crossing is cleared, so the next one counts again.
-# The context-keeper mod (.claude/skills/checkpoint/) reads the same
+# The context-keeper mod (hooks/register.tsx) reads the same
 # .crossed file and compacts once the checkpoint is fresh.
 # Never fails a tool call: on an unreadable input it exits 0. Without jq it
 # exits 0 and, on Stop, prints a fixed systemMessage for the user, because

@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-// The compact half of the context rule (.claude/skills/story/SKILL.md,
+// The compact half of the context rule (skills/story/SKILL.md of this plugin,
 // "Context rule"). context-guard.sh nudges and gates the save; this module
 // compacts once the checkpoint is fresh and resumes from it. Both read
 // .claude/skills/story/config.json and <plans>/.sessions/<key>.crossed, from
