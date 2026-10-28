@@ -1,8 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-// Every path holds spaces, like the main checkout of this repo (Team EIFFEL - LEAN).
+// Every path holds spaces, as a repo path can.
 const ROOT = '/Users/dev/Repo/Team EIFFEL - LEAN'
+const CONFIG = `${ROOT}/.claude/story.json`
 const CWD = `${ROOT}/.claude/worktrees/wt 1`
 const PLANS = `${ROOT}/.plans`
 const STATE = `${PLANS}/story-x.d/implement.md`
@@ -27,17 +28,18 @@ type World = {
   prompts: string[]
   toasts: string[]
   statuses: (string | undefined)[]
+  writes: string[]
 }
 
 const world = (
   on: On,
-  options: { percent: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string },
+  options: { percent: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean },
 ): World => {
-  const w: World = { files: new Map(), compacts: [], commands: [], prompts: [], toasts: [], statuses: [] }
+  const w: World = { files: new Map(), compacts: [], commands: [], prompts: [], toasts: [], statuses: [], writes: [] }
   w.files.set(`${CWD}/.git`, { text: `gitdir: ${ROOT}/.git/worktrees/wt 1\n`, mtimeMs: T0 })
-  w.files.set(`${ROOT}/.claude/skills/story/config.json`, { text: '{"checkpointPercent": 35}', mtimeMs: T0 })
+  if (!options.noConfig) w.files.set(CONFIG, { text: '{"checkpointPercent": 35}', mtimeMs: T0 })
   if (options.worktreePercent !== undefined) {
-    w.files.set(`${CWD}/.claude/skills/story/config.json`, { text: `{"checkpointPercent": ${options.worktreePercent}}`, mtimeMs: T0 })
+    w.files.set(`${CWD}/.claude/story.json`, { text: `{"checkpointPercent": ${options.worktreePercent}}`, mtimeMs: T0 })
   }
   w.files.set(`${PLANS}/.sessions/local_h1.json`, {
     text: JSON.stringify({ role: 'implement', slug: 'story-x', parent: 'local_orch' }),
@@ -66,6 +68,7 @@ const world = (
     return { value: { kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false } }
   })
   on('fs.write', (_, e) => {
+    w.writes.push(e.path)
     w.files.set(e.path, { text: e.text, mtimeMs: T0 })
     return { value: undefined }
   })
@@ -93,6 +96,7 @@ const world = (
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('session.start', (_, e) => e)
   return w
 }
 
@@ -137,7 +141,7 @@ test('at the save point with a fresh checkpoint: compacts once, steered to the s
 test('config comes from the main checkout, not from the worktree of the .git file', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
   const w = world(on, { percent: 32, state: fresh('wait'), crossed: crossedAt, worktreePercent: 90 })
-  w.files.set(`${ROOT}/.claude/skills/story/config.json`, { text: '{"checkpointPercent": 30}', mtimeMs: T0 })
+  w.files.set(CONFIG, { text: '{"checkpointPercent": 30}', mtimeMs: T0 })
   await $.turn.complete(turnEnd())
   await settle(clock)
   expect(w.compacts.length).toBe(1)
@@ -310,4 +314,20 @@ test('a turn that starts before /checkpoint runs blocks it', async ($, on) => {
   await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
   await settle(clock)
   expect(w.commands).toEqual([])
+})
+
+test('no .claude/story.json: no status line, no file write, no compaction, no steer', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 50, state: fresh('continue'), crossed: crossedAt, noConfig: true })
+  await $.session.start({ source: 'startup', cwd: CWD } as Parameters<typeof $.session.start>[0])
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
+  await $.session.compact({ trigger: 'manual', instructions: 'keep the plan', messages })
+  expect(w.statuses).toEqual([])
+  expect(w.writes).toEqual([])
+  expect(w.commands).toEqual([])
+  expect(w.prompts).toEqual([])
+  expect(w.toasts).toEqual([])
+  expect(w.compacts).toEqual(['keep the plan'])
 })

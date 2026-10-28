@@ -3,8 +3,10 @@ import type { EngineInterface, Register } from 'claude-code'
 // The compact half of the context rule (skills/story/SKILL.md of this plugin,
 // "Context rule"). context-guard.sh nudges and gates the save; this module
 // compacts once the checkpoint is fresh and resumes from it. Both read
-// .claude/skills/story/config.json and <plans>/.sessions/<key>.crossed, from
-// the main checkout root, because a desktop worktree session runs its hooks there.
+// .claude/story.json and <plans>/.sessions/<key>.crossed, from the main
+// checkout root, because a desktop worktree session runs its hooks there.
+// Without .claude/story.json the repo has not opted in: no status line, no
+// file write, no compaction and no steer.
 
 type $ = EngineInterface
 
@@ -17,15 +19,15 @@ type Where = {
   state: string
 }
 
-const CONFIG = '.claude/skills/story/config.json'
+const CONFIG = '.claude/story.json'
 const DEFAULT_PERCENT = 35
 const MIN_CHARS = 400
-// NOTE(eiffel): a session in this repo starts near 100k tokens. Under this window the
-// save point sits below what a compaction reaches, so the rule would compact every turn.
+// A story session starts near 100k tokens (system prompt, CLAUDE.md, skills). Under this
+// window the save point sits below what a compaction reaches, so the rule would compact every turn.
 const MIN_WINDOW = 400_000
 const RETRIES = 40
 const RETRY_MS = 500
-// NOTE(eiffel): paths hold spaces (the main checkout is "Team EIFFEL - LEAN"), so a path group is never \S+.
+// A repo path can hold spaces, so a path group is never \S+.
 const SENTINEL = /^CHECKPOINT-READY:\s*(.+?)\s*\|\s*(continue|wait)\s*$/
 
 const clean = (s: string | undefined) => (s ?? '').replace(/[^A-Za-z0-9._-]/g, '')
@@ -79,6 +81,15 @@ const mainRoot = async ($: $, cwd: string) => {
     if (link) return link[1]
   }
   return cwd
+}
+
+type Config = { checkpointPercent?: number }
+
+/** The repo's .claude/story.json, from the main checkout. undefined: the repo has not opted in. */
+const readConfig = async ($: $): Promise<Config | undefined> => {
+  const path = `${await mainRoot($, await $.session.cwd())}/${CONFIG}`
+  if (!(await $.fs.exists(path))) return undefined
+  return (await readJson<Config>($, path)) ?? {}
 }
 
 const where = async ($: $): Promise<Where> => {
@@ -172,7 +183,7 @@ const resume = async ($: $, w: Where, since: number) => {
   }
 }
 
-// NOTE(eiffel): a headless host (the desktop app runs every session through the SDK)
+// A headless host (the desktop app runs every session through the SDK)
 // refuses $.session.compact for good, but runs /compact between turns. /compact fires
 // the session.compact hook below, which adds the steer, so it gets no instructions here.
 const compactNow = async ($: $, w: Where): Promise<{ skip?: string }> => {
@@ -237,9 +248,10 @@ const runCheckpoint = async ($: $, since: number) => {
 
 const tick = async ($: $) => {
   const endedAt = await $.clock.now()
+  const config = await readConfig($)
+  if (config === undefined) return
   const w = await where($)
-  const config = await readJson<{ checkpointPercent?: number }>($, `${await mainRoot($, await $.session.cwd())}/${CONFIG}`)
-  const limit = config?.checkpointPercent ?? DEFAULT_PERCENT
+  const limit = config.checkpointPercent ?? DEFAULT_PERCENT
   const percent = await percentOf($)
   statusLine($, w, percent)
   if ((await $.session.usage()).context.window < MIN_WINDOW) return
@@ -280,6 +292,7 @@ const tick = async ($: $) => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    if ((await readConfig($)) === undefined) return started
     statusLine($, await where($), await percentOf($))
     return started
   })
@@ -307,7 +320,7 @@ export const register: Register = on => {
   })
 
   on('session.compact', async ($, e, next) => {
-    if (e.agentId !== undefined) return next(e)
+    if (e.agentId !== undefined || (await readConfig($)) === undefined) return next(e)
     const steer = instructions(await where($))
     const merged = e.instructions ? `${e.instructions}\n\n${steer}` : steer
     return next({ ...e, instructions: merged })
