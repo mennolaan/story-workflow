@@ -257,6 +257,11 @@ cmds=(
   "Bash|gh api --method=PATCH repos/o/r/pulls/1"
   "Bash|gh api repos/o/r/issues -f title=x"
   "Bash|gh api repos/o/r/issues --input body.json"
+  "Bash|gh api repos/o/r/issues --raw-field=title=x"
+  "Bash|gh api repos/o/r/issues -ftitle=x"
+  "Bash|gh api repos/o/r/issues -Ftitle=x"
+  "Bash|gh api repos/o/r/issues --field=title=x"
+  "Bash|gh api repos/o/r/issues --input=b.json"
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \

@@ -158,7 +158,7 @@ hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" perl -e '
     [qr/${b}gh${gf}\s+pr${gf}\s+(?!(?:view|list|diff|checks|status|checkout)${end})([a-z][a-z-]*)${end}/, "gh pr"],
     [qr/${b}gh${gf}\s+issue${gf}\s+(?!(?:view|list|status)${end})([a-z][a-z-]*)${end}/, "gh issue"],
     [qr/${b}gh${gf}\s+api\b[^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)(?!GET${end})([A-Za-z]+)/, "gh api"],
-    [qr/${b}gh${gf}\s+api\b(?![^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)GET${end})[^\n;&|]*\s(-f|-F|--field|--raw-field|--input)${end}/, "gh api with"],
+    [qr/${b}gh${gf}\s+api\b(?![^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)GET${end})[^\n;&|]*\s(-[fF]|--field(?=[=\s]|$)|--raw-field(?=[=\s]|$)|--input(?=[=\s]|$))/, "gh api with"],
   );
   for my $r (@rules) {
     if ($s =~ $r->[0]) { my $x = $1 // ""; print "run " . $r->[1] . ($x ne "" ? " $x" : ""); exit 0; }
