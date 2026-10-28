@@ -1,0 +1,14 @@
+{
+  "name": "story-workflow",
+  "owner": {
+    "name": "Menno Laan"
+  },
+  "description": "The story-workflow plugin: /story, /checkpoint, the story hooks and the context-keeper mod.",
+  "plugins": [
+    {
+      "name": "story-workflow",
+      "source": "./",
+      "description": "Run a board story through one orchestrator session and handoff sessions for plan, implement and PR review."
+    }
+  ]
+}

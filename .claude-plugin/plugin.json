@@ -1,0 +1,8 @@
+{
+  "name": "story-workflow",
+  "version": "0.1.0",
+  "description": "Run a board story through one orchestrator session and handoff sessions for plan, implement and PR review. Adds /story, /checkpoint, the story hooks and the context-keeper mod. A repo opts in with .claude/story.json.",
+  "author": {
+    "name": "Menno Laan"
+  }
+}
