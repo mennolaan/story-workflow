@@ -299,10 +299,12 @@ hook role-guard.sh "$(guard_in g-implement Bash "python3 -c 'print(1)' && git st
 for c in "git commit -m 'git push later'" "echo 'bash -c git push'" $'git commit -F - <<\'EOF\'\ndocs: git push stays with the orchestrator\nEOF' "echo 'git push' | grep -c push" "echo 'git push' | shellcheck -"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
-# 4f. clear_session: no decision only for an orchestrator that clears its own bound child
+# 4f. clear_session: "allow" only for an orchestrator that clears its own bound
+# child, "ask" for every other call. No settings allow rule is assumed.
 printf '{"role":"implement","slug":"story-g","state":"active","parent":"g-orchestrator"}\n' >"${plans}/.sessions/g-child.json"
 cs=mcp__ccd_session_mgmt__clear_session
-hook role-guard.sh "$(guard_in g-orchestrator "${cs}" g-child)"; [ -z "${out}" ] && [ "${code}" -eq 0 ] && pass "clear-gate: the orchestrator clears its own child with no prompt" || fail "clear-gate: own child not passed" "${out}"
+hook role-guard.sh "$(guard_in g-orchestrator "${cs}" g-child)"
+[[ "${out}" == *'"permissionDecision":"allow"'* ]] && [ "${code}" -eq 0 ] && pass "clear-gate: the orchestrator clears its own child with allow" || fail "clear-gate: own child not allowed" "${out}"
 for row in "g-implement|g-child|a child caller" "g-orchestrator|g-plan|a target with another parent" "g-orchestrator|g-none|an unbound target" "g-orchestrator|self|self" "g-unbound|g-child|an unbound caller"; do
   IFS='|' read -r caller target why <<<"${row}"
   hook role-guard.sh "$(guard_in "${caller}" "${cs}" "${target}")"

@@ -23,15 +23,16 @@
 # `bash|sh|zsh -c` or `eval`, a heredoc body on a line that names bash,
 # sh or zsh, and a quoted string that `<<<` or a pipe feeds to bash, sh or
 # zsh. A command after a path matches too (`/usr/bin/git push`).
-# mcp__ccd_session_mgmt__clear_session passes with no decision only for a bound
-# orchestrator whose target is bound with the orchestrator as its parent.
-# Every other call gets "ask" (a prompt even in auto mode), because the
-# settings allow clear_session for every session of the repo.
+# mcp__ccd_session_mgmt__clear_session gets "allow" only for a bound
+# orchestrator whose target is bound with the orchestrator as its parent, so
+# the orchestrator resets its own idle child with no prompt. Every other call
+# gets "ask" (a prompt even in auto mode). No settings allow rule is needed,
+# and a repo should keep none: it would grant every reset with no check.
 # Deny is the JSON permissionDecision form (code.claude.com/docs/en/hooks,
 # as of 2026-10-27). Without jq, or on an input that is not JSON, it exits 1
 # with the reason: a non-blocking error the user sees. Without jq a
-# clear_session call gets a fixed "ask", because after an exit 1 the settings
-# allow rule approves the call with no check.
+# clear_session call gets a fixed "ask", so a leftover settings allow rule
+# cannot approve it with no check.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -56,7 +57,7 @@ tool="$(jq -r '.tool_name // empty' <<<"${input}")"
 if [ "${tool}" = mcp__ccd_session_mgmt__clear_session ]; then
   target="$(jq -r '.tool_input.session_id // empty' <<<"${input}")"
   ask() {
-    jq -cn --arg r "role-guard: clear_session of ${target:-an unnamed session} needs your approval, because $1. The settings allow clear_session only for an orchestrator that resets its own idle child." \
+    jq -cn --arg r "role-guard: clear_session of ${target:-an unnamed session} needs your approval, because $1. Only an orchestrator that resets its own bound child gets no prompt." \
       '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$r}}'
     exit 0
   }
@@ -68,6 +69,8 @@ if [ "${tool}" = mcp__ccd_session_mgmt__clear_session ]; then
   tb="${dir}/.sessions/${target}.json"
   [ -f "${tb}" ] || ask "the target is not bound to a story"
   [ "$(story_field "${tb}" parent)" = "$(basename "${b}" .json)" ] || ask "the target is not a child of this orchestrator"
+  jq -cn --arg r "role-guard: the orchestrator resets its own bound child ${target}." \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'
   exit 0
 fi
 
