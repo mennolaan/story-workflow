@@ -71,7 +71,7 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `planBoundary` | `true` turns on the plan-boundary reminder and its stamp hook. Default `false`. |
 | `conventions` | Not read yet. The briefs send each session to the repo's `CLAUDE.md` for its conventions and checks. |
 
-The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. Only the orchestrator acts outward.
+The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. Only the orchestrator acts outward.
 
 ## Check it
 
@@ -91,6 +91,6 @@ The matrix exits 0 when every case passes. Each gate has a case that fails witho
 
 ## Known limits
 
-- The role guard is a deny list, not a sandbox. It does not catch a quoted verb such as `gh pr "merge" 5`, a child session that unbinds itself with `story-bind.sh`, or MCP tools that act outward.
+- The role guard is a deny list, not a sandbox. A child session can still write the binding files with a script in another language, for example `python3 -c`. It does not catch MCP tools that act outward.
 - The backstop check reads `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and the user, project, local and managed settings files. It does not see `--settings`, `--autocompact`, server-managed settings or the managed settings of an embedding host.
 - Mod modules are early access, and their API can change between Claude Code releases. Run the checks after you update Claude Code.

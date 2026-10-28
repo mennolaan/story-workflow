@@ -10,12 +10,17 @@
 #   story-bind.sh --unbind [<key>]   remove the binding of this session (or of
 #                           <key>, a child's session id) and its .crossed,
 #                           .nudged and .blocked marks. Safe to run again.
+#                           A child (plan, implement, pr-review) does not
+#                           unbind itself. Only a bound orchestrator unbinds
+#                           <key>, and only when that binding names it as
+#                           parent.
 #   story-bind.sh --check   check the repo config and print its path; binds
 #                           nothing (step 0 of /story)
 # Roles: orchestrator, plan, implement, pr-review.
 #
 # Writes <plans>/.sessions/<key>.json with role, slug, state, parent, bound_at
-# and session_id, and creates <plans>/<slug>.d/. <plans> is the .plans/ folder
+# and session_id, and creates <plans>/<slug>.d/. A bound child binds again only
+# with the same role, story and parent. <plans> is the .plans/ folder
 # of the main checkout (story-lib.sh). Exit 1 with the reason on bad input.
 # Every mode exits 1 when the repo has no .claude/story.json or the file is not
 # valid JSON. It is a command, so it fails loud where the automatic hooks stay
@@ -157,13 +162,28 @@ unbind() {
   printf 'Unbound %s.\n' "${k}"
 }
 
+key="$(story_key '{}')"
+[ -n "${key}" ] || fail "no session id. Neither CLAUDE_CODE_HOST_SESSION_ID nor CLAUDE_CODE_SESSION_ID is set. Run this from the Bash tool of the session to bind."
+me="$(story_binding '{}')"
+my_role=""
+my_key=""
+if [ -n "${me}" ]; then
+  my_role="$(story_field "${me}" role)"
+  my_key="$(basename "${me}" .json)"
+fi
+
 if [ "${1:-}" = "--unbind" ] && [ -n "${2:-}" ]; then
   [ "${2}" = "$(story_clean "${2}")" ] || fail "key '${2}' holds characters outside A-Z a-z 0-9 . _ -."
+  [ "${my_role}" = orchestrator ] \
+    || fail "only a bound orchestrator unbinds another session, and this session is ${my_role:-unbound}. Ask the orchestrator of the story to run story-bind.sh --unbind ${2}."
+  if [ -f "${dir}/.sessions/${2}.json" ]; then
+    tparent="$(story_field "${dir}/.sessions/${2}.json" parent)"
+    [ "${tparent}" = "${my_key}" ] \
+      || fail "the binding of ${2} names the parent '${tparent}', not this orchestrator (${my_key}). Only its own orchestrator unbinds it."
+  fi
   unbind "${2}"
   exit 0
 fi
-key="$(story_key '{}')"
-[ -n "${key}" ] || fail "no session id. Neither CLAUDE_CODE_HOST_SESSION_ID nor CLAUDE_CODE_SESSION_ID is set. Run this from the Bash tool of the session to bind."
 
 if [ "${1:-}" = "--state" ]; then
   story_state_file '{}'
@@ -171,6 +191,8 @@ if [ "${1:-}" = "--state" ]; then
 fi
 
 if [ "${1:-}" = "--unbind" ]; then
+  story_is_child "${my_role}" \
+    && fail "a ${my_role} session does not unbind itself. Its orchestrator runs story-bind.sh --unbind ${my_key} when the story ends."
   b="$(story_binding '{}')"
   [ -n "${b}" ] || { printf '%s was not bound.\n' "${key}"; exit 0; }
   unbind "$(basename "${b}" .json)"
@@ -193,6 +215,15 @@ case " ${story_roles} " in
   *) fail "role '${role}' is not one of: ${story_roles}. Usage: story-bind.sh <role> <slug> [--parent <id>]" ;;
 esac
 [ -n "${slug}" ] && [ "${slug}" = "$(story_clean "${slug}")" ] || fail "slug '${slug}' is empty or holds characters outside A-Z a-z 0-9 . _ -."
+if story_is_child "${my_role}"; then
+  my_slug="$(story_field "${me}" slug)"
+  my_parent="$(story_field "${me}" parent)"
+  same=1
+  [ "${role}" = "${my_role}" ] && [ "${slug}" = "${my_slug}" ] || same=0
+  [ -z "${my_parent}" ] || [ "${parent}" = "${my_parent}" ] || same=0
+  [ "${same}" -eq 1 ] \
+    || fail "this session is bound as ${my_role} of story ${my_slug} under ${my_parent:-no parent}. A child does not change its role, story or parent. Its orchestrator unbinds it first."
+fi
 
 backstop_gate
 

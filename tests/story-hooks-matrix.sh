@@ -614,7 +614,7 @@ o="$(sbx CLAUDE_CODE_SESSION_ID=cli-1 -- --state)"
 [ "${o}" = "${plans}/story-z.d/implement.md" ] && pass "story-bind: --state prints the bound checkpoint path" || fail "story-bind: --state wrong" "${o}"
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-free -- --state)"
 [ "${o}" = "${plans}/.sessions/cli-free.md" ] && pass "story-bind: --state prints the unbound checkpoint path" || fail "story-bind: unbound --state wrong" "${o}"
-bind cli-u implement story-u
+bind cli-u orchestrator story-u
 for m in crossed nudged blocked; do printf '1\n' >"${plans}/.sessions/cli-u.${m}"; done
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-u -- --unbind 2>&1)"
 left="$(find "${plans}/.sessions" -name 'cli-u.*')"
@@ -622,11 +622,53 @@ left="$(find "${plans}/.sessions" -name 'cli-u.*')"
   && pass "story-bind: --unbind removes the binding and its marks" || fail "story-bind: --unbind left files" "${o}; ${left}"
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-u -- --unbind 2>&1)"; c=$?
 [ "${c}" -eq 0 ] && [ "${o}" = "cli-u was not bound." ] && pass "story-bind: --unbind again exits 0" || fail "story-bind: a second --unbind failed" "${c} ${o}"
-bind cli-child implement story-u
+bind cli-orch orchestrator story-u
+printf '{"role":"implement","slug":"story-u","state":"active","parent":"cli-orch","session_id":"cli-child"}\n' >"${plans}/.sessions/cli-child.json"
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-orch -- --unbind cli-child 2>&1)"
 [ ! -e "${plans}/.sessions/cli-child.json" ] && pass "story-bind: --unbind <key> removes a child's binding" || fail "story-bind: --unbind <key> kept the binding" "${o}"
 hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"cli-child"}'
 [ -z "${out}" ] && pass "story-bind: an unbound session gets no re-prime" || fail "story-bind: re-prime after --unbind" "${out}"
+
+# A child does not unbind or rebind itself. Only its parent orchestrator unbinds it.
+kb() { printf '{"role":"%s","slug":"%s","state":"active","parent":"%s","session_id":"%s"}\n' "$2" "$3" "$4" "$1" >"${plans}/.sessions/$1.json"; }
+kb k-orch orchestrator story-k ""
+kb k-orch2 orchestrator story-k2 ""
+kb k-child implement story-k k-orch
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-child -- --unbind 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: a child --unbind of itself exits 1 and keeps the binding" || fail "story-bind: a child unbound itself (exit ${c})" "${o}"
+for args in "orchestrator story-k" "implement story-other" "plan story-k"; do
+  # shellcheck disable=SC2086 # args holds two words on purpose
+  o="$(sbx CLAUDE_CODE_SESSION_ID=k-child -- ${args} 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [ "$(jq -r '.role + "/" + .slug' "${plans}/.sessions/k-child.json")" = implement/story-k ] \
+    && pass "story-bind: a child cannot rebind as ${args}" || fail "story-bind: a child rebound as ${args} (exit ${c})" "${o}"
+done
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-child -- implement story-k --parent k-orch 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && pass "story-bind: a child binds again with the same role and story" || fail "story-bind: the same binding again failed (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch2 -- --unbind k-child 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: an orchestrator cannot unbind a foreign child" || fail "story-bind: a foreign orchestrator unbound the child (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-free -- --unbind k-child 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: an unbound session cannot unbind a child" || fail "story-bind: an unbound session unbound the child (exit ${c})" "${o}"
+kb k-child2 plan story-k k-orch
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-child2 -- --unbind k-child 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: a child cannot unbind a sibling" || fail "story-bind: a child unbound a sibling (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch -- --unbind k-child 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [ ! -e "${plans}/.sessions/k-child.json" ] && pass "story-bind: the parent orchestrator unbinds its own child" || fail "story-bind: the parent could not unbind its child (exit ${c})" "${o}"
+# A child does not write the binding files.
+kb g-plan plan story-g local_orch
+for c in "rm .plans/.sessions/x.json" "rm -f ${plans}/.sessions/g-orchestrator.json" "printf '{}' > \"${plans}/.sessions/g-plan.json\"" "sed -i '' s/plan/orchestrator/ .plans/.sessions/g-plan.json" "cp /tmp/x.json .plans/.sessions/g-plan.json"; do
+  hook role-guard.sh "$(guard_in g-plan Bash "${c}")"
+  [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *binding* ]] && pass "role-guard: a child is denied ${c}" || fail "role-guard: a child may ${c}" "${out}"
+done
+for t in Write Edit NotebookEdit; do
+  hook role-guard.sh "$(jq -cn --arg t "${t}" --arg f "${plans}/.sessions/g-plan.json" '{hook_event_name:"PreToolUse",session_id:"g-plan",tool_name:$t,tool_input:{file_path:$f,notebook_path:$f,content:"{}"}}')"
+  [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "role-guard: a child ${t} to its binding file is denied" || fail "role-guard: a child may ${t} its binding file" "${out}"
+  hook role-guard.sh "$(jq -cn --arg t "${t}" --arg f "${tmp}/notes.md" '{hook_event_name:"PreToolUse",session_id:"g-plan",tool_name:$t,tool_input:{file_path:$f,notebook_path:$f,content:"x"}}')"
+  [ -z "${out}" ] && pass "role-guard: a child may ${t} another file" || fail "role-guard: a child ${t} to another file was denied" "${out}"
+  hook role-guard.sh "$(jq -cn --arg t "${t}" --arg f "${plans}/.sessions/g-plan.json" '{hook_event_name:"PreToolUse",session_id:"g-orchestrator",tool_name:$t,tool_input:{file_path:$f,notebook_path:$f,content:"{}"}}')"
+  [ -z "${out}" ] && pass "role-guard: the orchestrator may ${t} a binding file" || fail "role-guard: the orchestrator ${t} was denied" "${out}"
+done
+jq -e '[.hooks.PreToolUse[] | select(.hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\"") | .matcher] as $m | ["Edit", "Write", "NotebookEdit"] | all(. as $t | $m | any(. as $x | $t | test("^(" + $x + ")$")))' "${hooks}/hooks.json" >/dev/null \
+  && pass "role-guard: hooks.json routes Edit, Write and NotebookEdit to the guard" || fail "role-guard: hooks.json does not route Edit, Write and NotebookEdit to role-guard.sh"
 
 # story-bind fails loud without .claude/story.json (a command, not an automatic hook)
 for args in "implement story-nc" "--state" "--show" "--unbind" "--check"; do

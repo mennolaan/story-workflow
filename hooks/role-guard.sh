@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse (AskUserQuestion|Bash): a bound child session (plan,
+# Claude Code PreToolUse (hooks/hooks.json routes the tools): a bound child session (plan,
 # implement, pr-review) does not ask the user and does not act outward. Only
 # the orchestrator does (skills/story/SKILL.md, "Authority").
 # Denied for a child role:
@@ -14,6 +14,10 @@
 #   gh api with a method other than GET, or with -f, -F, --field,
 #   --raw-field or --input and no explicit GET (gh then sends a POST)
 #   each Perl regex in "guard.deny" of .claude/story.json
+#   a write to <plans>/.sessions/ (the binding files): Edit, Write and
+#   NotebookEdit on a path under it, and rm, mv, cp, tee, truncate, ln,
+#   sed -i, > or >> in a shell command. A deny list: a script in another
+#   language can still write there.
 # in Bash and in mcp__terminal__run_in_terminal (the user's own shell).
 # role-guard.pl parses the command into shell words, so a quoted verb
 # (gh pr "merge") is a verb and an argument (a commit message, echo text, a
@@ -104,8 +108,15 @@ deny() {
   exit 0
 }
 
+sessions="$(story_plans_dir 2>/dev/null)/.sessions"
 case "${tool}" in
   AskUserQuestion) deny "ask the user (AskUserQuestion)" ;;
+  Edit|Write|NotebookEdit)
+    path="$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"${input}")"
+    case "${path}" in
+      "${sessions}"/*|*/.sessions/*|.sessions/*) deny "change the binding files (${tool} ${path}). Only story-bind.sh of the orchestrator does that" ;;
+    esac
+    exit 0 ;;
   Bash|mcp__terminal__run_in_terminal) ;;
   *) exit 0 ;;
 esac
@@ -117,7 +128,6 @@ broken=""
 extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.deny is not a list of strings") end' "${config}" 2>&1)" \
   || { broken="${extra}"; extra=""; }
 
-sessions="$(story_plans_dir 2>/dev/null)/.sessions"
 hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" STORY_SESSIONS_DIR="${sessions}" perl "${here}/role-guard.pl")" \
   || deny "run a command while the command check (role-guard.pl) failed. Ask the orchestrator to check perl"
 IFS=$'\t' read -r kind what why <<<"${hit}"
