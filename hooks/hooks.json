@@ -11,7 +11,7 @@
         ]
       },
       {
-        "matcher": "AskUserQuestion|Bash|Edit|Write|NotebookEdit|mcp__terminal__run_in_terminal|mcp__ccd_session_mgmt__clear_session",
+        "matcher": "AskUserQuestion|Bash|Edit|Write|NotebookEdit|mcp__.*",
         "hooks": [
           {
             "type": "command",

@@ -19,6 +19,15 @@
 #   sed -i, > or >> in a shell command. A deny list: a script in another
 #   language can still write there.
 # in Bash and in mcp__terminal__run_in_terminal (the user's own shell).
+# MCP tools that act outward (the hooks.json matcher sends mcp__.*):
+#   mcp__ccd_pr__* except get_status; ccd_session start_session and
+#   move_to_cloud; ccd_session_mgmt archive, unarchive, delete, stop, clear,
+#   detach, send_message, set_remote_control, set_session_model,
+#   set_session_effort and set_session_permission_mode; set_session_title
+#   unless session_id is self or the key of the caller's own binding;
+#   ccd_host sync_with_base_branch, discard_kept_worktree and
+#   clean_up_worktrees; and each tool name that fully matches a Perl regex in
+#   "guard.denyTools". mcp__ccd_turn__* and read-only tools stay open.
 # role-guard.pl parses the command into shell words, so a quoted verb
 # (gh pr "merge") is a verb and an argument (a commit message, echo text, a
 # grep pattern) is never a command. Its header lists what it parses and how
@@ -84,6 +93,11 @@ if [ "${tool}" = mcp__ccd_session_mgmt__clear_session ]; then
     exit 0
   }
   [ -n "${b}" ] || ask "this session is not bound to a story"
+  if story_is_child "$(story_field "${b}" role)"; then
+    jq -cn --arg r "role-guard: the $(story_field "${b}" role) session of story $(story_field "${b}" slug) does not reset sessions (clear_session). Only the orchestrator does that. Send a QUESTION to the orchestrator with SendMessage, then end the turn." \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+    exit 0
+  fi
   [ "$(story_field "${b}" role)" = orchestrator ] || ask "this session is not an orchestrator"
   [ -n "${target}" ] && [ "${target}" != self ] || ask "the target is this session itself"
   [ "${target}" = "$(story_clean "${target}")" ] || ask "the target id holds characters outside A-Z a-z 0-9 . _ -"
@@ -109,24 +123,61 @@ deny() {
 }
 
 sessions="$(story_plans_dir 2>/dev/null)/.sessions"
+config="$(story_config_file)"
+broken=""
+extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.deny is not a list of strings") end' "${config}" 2>&1)" \
+  || { broken="${extra}"; extra=""; }
+tools="$(jq -r '(.guard.denyTools // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.denyTools is not a list of strings") end' "${config}" 2>&1)" \
+  || { broken="${broken:+${broken}; }${tools}"; tools=""; }
+
+# mcp_builtin <tool name>: exit 0 when a child may not call the MCP tool.
+mcp_builtin() {
+  local t="$1" target
+  case "${t}" in
+    mcp__ccd_pr__get_status) return 1 ;;
+    mcp__ccd_pr__*|mcp__ccd_session__start_session|mcp__ccd_session__move_to_cloud) return 0 ;;
+    mcp__ccd_session_mgmt__archive_session|mcp__ccd_session_mgmt__unarchive_session|mcp__ccd_session_mgmt__delete_session) return 0 ;;
+    mcp__ccd_session_mgmt__stop_session|mcp__ccd_session_mgmt__clear_session|mcp__ccd_session_mgmt__detach_session) return 0 ;;
+    mcp__ccd_session_mgmt__send_message|mcp__ccd_session_mgmt__set_remote_control) return 0 ;;
+    mcp__ccd_session_mgmt__set_session_model|mcp__ccd_session_mgmt__set_session_effort|mcp__ccd_session_mgmt__set_session_permission_mode) return 0 ;;
+    mcp__ccd_host__sync_with_base_branch|mcp__ccd_host__discard_kept_worktree|mcp__ccd_host__clean_up_worktrees) return 0 ;;
+    mcp__ccd_session_mgmt__set_session_title)
+      target="$(jq -r '.tool_input.session_id // empty' <<<"${input}")"
+      if [ "${target}" = self ] || [ "${target}" = "$(basename "${b}" .json)" ]; then return 1; fi
+      return 0 ;;
+  esac
+  return 1
+}
+
 case "${tool}" in
   AskUserQuestion) deny "ask the user (AskUserQuestion)" ;;
+  Bash|mcp__terminal__run_in_terminal) ;;
+  mcp__*)
+    if mcp_builtin "${tool}"; then deny "call ${tool}, which acts outward"; fi
+    tool_hit="$(STORY_DENY_TOOLS="${tools}" perl -e '
+      my $t = shift;
+      for my $re (grep { length } split /\n/, ($ENV{STORY_DENY_TOOLS} // "")) {
+        my $q = eval { qr/^(?:$re)$/ };
+        if (!defined $q) { print "BAD\t$re"; exit 0; }
+        if ($t =~ $q) { print "HIT\t$re"; exit 0; }
+      }' "${tool}")" || deny "call any tool while the tool check failed. Ask the orchestrator to check perl"
+    case "${tool_hit}" in
+      HIT$'\t'*) deny "call ${tool}, which the guard.denyTools entry '${tool_hit#HIT$'\t'}' in ${config} denies" ;;
+      BAD$'\t'*) deny "call any tool while the guard.denyTools entry '${tool_hit#BAD$'\t'}' in ${config} is not a valid Perl regex. Ask the orchestrator to fix the entry" ;;
+    esac
+    [ -z "${broken}" ] || deny "call any tool while ${config} cannot be read as lists of guard.deny and guard.denyTools regex strings (${broken}). Ask the orchestrator to fix the file"
+    exit 0 ;;
   Edit|Write|NotebookEdit)
     path="$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"${input}")"
     case "${path}" in
       "${sessions}"/*|*/.sessions/*|.sessions/*) deny "change the binding files (${tool} ${path}). Only story-bind.sh of the orchestrator does that" ;;
     esac
     exit 0 ;;
-  Bash|mcp__terminal__run_in_terminal) ;;
   *) exit 0 ;;
 esac
 
 cmd="$(jq -r '.tool_input.command // empty' <<<"${input}")"
 [ -n "${cmd}" ] || exit 0
-config="$(story_config_file)"
-broken=""
-extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.deny is not a list of strings") end' "${config}" 2>&1)" \
-  || { broken="${extra}"; extra=""; }
 
 hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" STORY_SESSIONS_DIR="${sessions}" perl "${here}/role-guard.pl")" \
   || deny "run a command while the command check (role-guard.pl) failed. Ask the orchestrator to check perl"
@@ -136,5 +187,5 @@ case "${kind}" in
   parse) deny "run a command that the guard cannot parse: ${what}. Rewrite it with balanced quotes" ;;
   bad) deny "run any command while the guard.deny entry '${what}' in ${config} is not a valid Perl regex (${why}). Ask the orchestrator to fix the entry" ;;
 esac
-[ -n "${broken}" ] && deny "run any command while ${config} cannot be read as a list of guard.deny regex strings (${broken}). Ask the orchestrator to fix the file"
+[ -n "${broken}" ] && deny "run any command while ${config} cannot be read as lists of guard.deny and guard.denyTools regex strings (${broken}). Ask the orchestrator to fix the file"
 exit 0

@@ -68,10 +68,11 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `pr.create` | The command that opens a draft PR. Placeholders: `{branch}`, `{base}`, `{ids}`, `{title}`, `{description}`. Without it the orchestrator asks you how to open the PR. |
 | `review` | Optional. `plan` (`{plan}` is the plan path), `changes`, `pr`, and `fallback` (run when the review command stops because a tool is missing). Without it the sessions skip the review and say so. |
 | `guard.deny` | Extra Perl regexes. The role guard splits a shell command into simple commands, removes the quotes, and joins the words of each simple command with single spaces. A regex that matches that text (with `/m`) denies the child session the command. It also sees the scripts that the command runs: `bash -c`, `eval`, `$(...)` and heredocs fed to a shell. A regex also matches argument text, so anchor it with `^` to match only a command, for example `^terraform\\s+apply\\b`. |
+| `guard.denyTools` | Extra MCP tool names, as Perl regexes. A regex must match the whole tool name, for example `mcp__github__.*`. The role guard denies a child session every call to a tool that matches one. |
 | `planBoundary` | `true` turns on the plan-boundary reminder and its stamp hook. Default `false`. |
 | `conventions` | Not read yet. The briefs send each session to the repo's `CLAUDE.md` for its conventions and checks. |
 
-The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. Only the orchestrator acts outward.
+The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. It also denies a child these MCP tools: `mcp__ccd_pr__*` except `get_status`, `start_session`, `move_to_cloud`, `clear_session`, the session tools that archive, delete, stop, detach, message or reconfigure a session, `set_session_title` for any session but its own, and the host tools that sync or clean up worktrees. `mcp__ccd_turn__*` and read-only tools stay open. Only the orchestrator acts outward.
 
 ## Check it
 
@@ -91,6 +92,6 @@ The matrix exits 0 when every case passes. Each gate has a case that fails witho
 
 ## Known limits
 
-- The role guard is a deny list, not a sandbox. A child session can still write the binding files with a script in another language, for example `python3 -c`. It does not catch MCP tools that act outward.
+- The role guard is a deny list, not a sandbox. A child session can still write the binding files with a script in another language, for example `python3 -c`. It does not know an MCP tool that is not in its list, so name such tools in `guard.denyTools`.
 - The backstop check reads `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and the user, project, local and managed settings files. It does not see `--settings`, `--autocompact`, server-managed settings or the managed settings of an embedding host.
 - Mod modules are early access, and their API can change between Claude Code releases. Run the checks after you update Claude Code.

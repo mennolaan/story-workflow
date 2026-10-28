@@ -368,13 +368,13 @@ printf '{"role":"implement","slug":"story-g","state":"active","parent":"g-orches
 cs=mcp__ccd_session_mgmt__clear_session
 hook role-guard.sh "$(guard_in g-orchestrator "${cs}" g-child)"
 [[ "${out}" == *'"permissionDecision":"allow"'* ]] && [ "${code}" -eq 0 ] && pass "clear-gate: the orchestrator clears its own child with allow" || fail "clear-gate: own child not allowed" "${out}"
-for row in "g-implement|g-child|a child caller" "g-orchestrator|g-plan|a target with another parent" "g-orchestrator|g-none|an unbound target" "g-orchestrator|self|self" "g-unbound|g-child|an unbound caller"; do
+hook role-guard.sh "$(guard_in g-implement "${cs}" g-child)"
+[[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "clear-gate: a child caller gets deny" || fail "clear-gate: a child caller not denied" "${out}"
+for row in "g-orchestrator|g-plan|a target with another parent" "g-orchestrator|g-none|an unbound target" "g-orchestrator|self|self" "g-unbound|g-child|an unbound caller"; do
   IFS='|' read -r caller target why <<<"${row}"
   hook role-guard.sh "$(guard_in "${caller}" "${cs}" "${target}")"
   [[ "${out}" == *'"permissionDecision":"ask"'* ]] && pass "clear-gate: ${why} gets ask" || fail "clear-gate: ${why} not asked" "${out}"
 done
-jq -e '.hooks.PreToolUse[] | select(.matcher | split("|") | (index("Bash") and index("mcp__terminal__run_in_terminal") and index("mcp__ccd_session_mgmt__clear_session"))) | .hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\""' \
-  "${hooks}/hooks.json" >/dev/null && pass "role-guard: hooks.json routes run_in_terminal and clear_session to the guard" || fail "role-guard: no PreToolUse entry in hooks/hooks.json with Bash, mcp__terminal__run_in_terminal and mcp__ccd_session_mgmt__clear_session in its matcher has exactly the command that runs hooks/role-guard.sh from the plugin root"
 hook role-guard.sh 'not json' >/dev/null
 [ "${code}" -eq 1 ] && grep -q "not JSON" "${tmp}/stderr" && pass "role-guard: a non-JSON input fails loud (exit 1)" || fail "role-guard: non-JSON input exit ${code}"
 
@@ -669,6 +669,62 @@ for t in Write Edit NotebookEdit; do
 done
 jq -e '[.hooks.PreToolUse[] | select(.hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\"") | .matcher] as $m | ["Edit", "Write", "NotebookEdit"] | all(. as $t | $m | any(. as $x | $t | test("^(" + $x + ")$")))' "${hooks}/hooks.json" >/dev/null \
   && pass "role-guard: hooks.json routes Edit, Write and NotebookEdit to the guard" || fail "role-guard: hooks.json does not route Edit, Write and NotebookEdit to role-guard.sh"
+
+# 4j. outward MCP tools: denied for a child, open for the orchestrator and unbound sessions
+mcp_in() { jq -cn --arg s "$1" --arg t "$2" --arg id "${3:-}" '{hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{session_id:$id,title:"x"}}'; }
+denied_tools=(mcp__ccd_pr__bind_pr mcp__ccd_pr__set_auto_merge mcp__ccd_pr__unbind_pr mcp__ccd_session__start_session mcp__ccd_session__move_to_cloud
+  mcp__ccd_session_mgmt__archive_session mcp__ccd_session_mgmt__unarchive_session mcp__ccd_session_mgmt__delete_session mcp__ccd_session_mgmt__stop_session
+  mcp__ccd_session_mgmt__detach_session mcp__ccd_session_mgmt__send_message mcp__ccd_session_mgmt__set_remote_control
+  mcp__ccd_session_mgmt__set_session_model mcp__ccd_session_mgmt__set_session_effort mcp__ccd_session_mgmt__set_session_permission_mode
+  mcp__ccd_host__sync_with_base_branch mcp__ccd_host__discard_kept_worktree mcp__ccd_host__clean_up_worktrees)
+open_tools=(mcp__ccd_pr__get_status mcp__ccd_turn__update_plan mcp__ccd_turn__wrap_up mcp__ccd_session_mgmt__list_sessions mcp__ccd_session_mgmt__get_session mcp__filesystem__read_file)
+for t in "${denied_tools[@]}"; do
+  hook role-guard.sh "$(mcp_in g-implement "${t}" other)"
+  [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "mcp: a child is denied ${t}" || fail "mcp: a child may call ${t}" "${out}"
+  for who in g-orchestrator g-unbound; do
+    hook role-guard.sh "$(mcp_in "${who}" "${t}" other)"
+    [ -z "${out}" ] && [ "${code}" -eq 0 ] || fail "mcp: ${who} was stopped on ${t}" "${out}"
+  done
+done
+pass "mcp: the orchestrator and an unbound session pass every denied tool"
+for t in "${open_tools[@]}"; do
+  hook role-guard.sh "$(mcp_in g-implement "${t}")"
+  [ -z "${out}" ] && pass "mcp: a child may call ${t}" || fail "mcp: a child was denied ${t}" "${out}"
+done
+for id in self g-implement; do
+  hook role-guard.sh "$(mcp_in g-implement mcp__ccd_session_mgmt__set_session_title "${id}")"
+  [ -z "${out}" ] && pass "mcp: a child may set its own title (${id})" || fail "mcp: a child was denied its own title (${id})" "${out}"
+done
+for id in g-orchestrator ""; do
+  hook role-guard.sh "$(mcp_in g-implement mcp__ccd_session_mgmt__set_session_title "${id}")"
+  [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "mcp: a child is denied the title of '${id}'" || fail "mcp: a child set the title of '${id}'" "${out}"
+done
+hook role-guard.sh "$(mcp_in g-implement mcp__ccd_session_mgmt__set_session_title local_h7)" CLAUDE_CODE_HOST_SESSION_ID=local_h7
+[[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "mcp: a host id that is not the binding key does not count as own" || fail "mcp: an unbound host id counted as own" "${out}"
+printf '{"guard": {"denyTools": ["mcp__github__.*", "mcp__ccd_turn__wrap_up"]}}\n' >"${tmp}/tools.json"
+for t in mcp__github__create_issue mcp__ccd_turn__wrap_up; do
+  hook role-guard.sh "$(mcp_in g-implement "${t}")" STORY_CONFIG="${tmp}/tools.json"
+  [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *guard.denyTools* ]] && pass "guard.denyTools: a child is denied ${t}" || fail "guard.denyTools: ${t} passed" "${out}"
+done
+hook role-guard.sh "$(mcp_in g-implement mcp__github__get_issue_x)" STORY_CONFIG="${tmp}/tools.json"
+[[ "${out}" == *deny* ]] && pass "guard.denyTools: a regex covers the whole family" || fail "guard.denyTools: family missed" "${out}"
+hook role-guard.sh "$(mcp_in g-implement mcp__other__github__x)" STORY_CONFIG="${tmp}/tools.json"
+[ -z "${out}" ] && pass "guard.denyTools: an entry matches the whole tool name, not a part" || fail "guard.denyTools: a partial name matched" "${out}"
+hook role-guard.sh "$(mcp_in g-orchestrator mcp__github__create_issue)" STORY_CONFIG="${tmp}/tools.json"
+[ -z "${out}" ] && pass "guard.denyTools: the orchestrator passes" || fail "guard.denyTools: the orchestrator was denied" "${out}"
+printf '{"guard": {"denyTools": ["(bad"]}}\n' >"${tmp}/tools-bad.json"
+printf '{"guard": {"denyTools": "mcp__x"}}\n' >"${tmp}/tools-str.json"
+for f in tools-bad tools-str; do
+  hook role-guard.sh "$(mcp_in g-implement mcp__ccd_turn__update_plan)" STORY_CONFIG="${tmp}/${f}.json"
+  [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *denyTools* ]] && pass "guard.denyTools: ${f}.json denies the child (fail closed)" || fail "guard.denyTools: ${f}.json passed" "${out}"
+done
+routes() { # routes <tool>...: prints each tool that no role-guard matcher of hooks.json covers
+  jq -r '[.hooks.PreToolUse[] | select(.hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\"") | .matcher] as $m | $ARGS.positional[] | select(. as $t | $m | any(. as $x | $t | test("^(" + $x + ")$")) | not)' "${hooks}/hooks.json" --args "$@"
+}
+o="$(routes AskUserQuestion Bash Edit Write NotebookEdit mcp__terminal__run_in_terminal mcp__ccd_session_mgmt__clear_session "${denied_tools[@]}" mcp__github__create_issue)"
+[ -z "${o}" ] && pass "routing: hooks.json sends every guarded tool to role-guard.sh" || fail "routing: not routed" "${o}"
+n="$(jq '[.hooks.PreToolUse[] | select(.hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\"") | .matcher | select(test("mcp__"))] | length' "${hooks}/hooks.json")"
+[ "${n}" -eq 1 ] && pass "routing: one matcher sends MCP tools, so the guard runs once per call" || fail "routing: ${n} matchers name MCP tools"
 
 # story-bind fails loud without .claude/story.json (a command, not an automatic hook)
 for args in "implement story-nc" "--state" "--show" "--unbind" "--check"; do

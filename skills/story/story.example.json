@@ -5,7 +5,7 @@
   "branch": "feature/{id}-{slug}",
   "board": { "show": "gh issue view {id}" },
   "pr": { "create": "gh pr create --draft --base {base} --head {branch} --title {title} --body {description}" },
-  "guard": { "deny": [] },
+  "guard": { "deny": [], "denyTools": [] },
   "planBoundary": false,
   "conventions": "CLAUDE.md"
 }
