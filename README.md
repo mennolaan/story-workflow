@@ -16,7 +16,7 @@ The plugin does nothing in a repo without `.claude/story.json`. Install it once,
 - The Claude desktop app (Code tab) for `/story`. The orchestrator starts, resets and renames its sessions with the session tools of the app. One bound session also works in the terminal CLI.
 - Claude Code 2.1.308 or later. Earlier versions refuse the mod. Tested on 2.1.312 (2026-10-28).
 - `jq` and `git` on PATH.
-- Read access to this private repo, and a git credential for github.com on your machine. The install does not ask for one. Run `gh auth login`, then `gh auth setup-git`, or add an SSH key to your GitHub account.
+- Network access to github.com. The repo is public, so the install needs no GitHub account or credential.
 
 ## Install
 
@@ -26,13 +26,11 @@ In a terminal:
 claude plugin install story-workflow --marketplace mennolaan/story-workflow
 ```
 
-This adds the marketplace `story-workflow` to your user settings and installs the plugin at user scope. Tested on 2026-10-28.
+This adds the marketplace `story-workflow` to your user settings and installs the plugin at user scope. Tested on 2026-10-28 with no git credential.
 
 In the desktop app: click + next to the prompt box, then Plugins, then Add marketplace with `mennolaan/story-workflow`, then Add plugin. This path comes from the Claude Code plugin reference and was not tested here.
 
 Start a new session after the install. A running session keeps the plugins it loaded at start.
-
-Without access to the repo, the install stops with `Permission denied (publickey)` and `Could not read from remote repository`. Ask the owner for access, then set up the credential (see "Requirements").
 
 Update and remove:
 
