@@ -665,6 +665,11 @@ o="$(sbx CLAUDE_CODE_SESSION_ID=k-orch2 -- --unbind k-child 2>&1)"; c=$?
 [ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: an orchestrator cannot unbind a foreign child" || fail "story-bind: a foreign orchestrator unbound the child (exit ${c})" "${o}"
 o="$(sbx CLAUDE_CODE_SESSION_ID=k-free -- --unbind k-child 2>&1)"; c=$?
 [ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: an unbound session cannot unbind a child" || fail "story-bind: an unbound session unbound the child (exit ${c})" "${o}"
+kb k-orch3 orchestrator story-k3 ""
+for who in k-free k-child2x; do
+  o="$(sbx CLAUDE_CODE_SESSION_ID="${who}" -- --unbind k-orch3 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-orch3.json" ] && pass "story-bind: ${who} (no orchestrator binding) cannot unbind an orchestrator with an empty parent" || fail "story-bind: ${who} unbound an orchestrator (exit ${c})" "${o}"
+done
 kb k-child2 plan story-k k-orch
 o="$(sbx CLAUDE_CODE_SESSION_ID=k-child2 -- --unbind k-child 2>&1)"; c=$?
 [ "${c}" -eq 1 ] && [ -f "${plans}/.sessions/k-child.json" ] && pass "story-bind: a child cannot unbind a sibling" || fail "story-bind: a child unbound a sibling (exit ${c})" "${o}"
