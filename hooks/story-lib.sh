@@ -6,6 +6,9 @@
 # .plans/.sessions/ names the role and the story of one session. Its key is
 # CLAUDE_CODE_HOST_SESSION_ID (the desktop id, kept over /clear), else the
 # Claude Code session id.
+# A repo opts in with .claude/story.json in its main checkout
+# (skills/story/story.example.json). Without that file story_enabled fails,
+# and every automatic hook exits 0 with no output and no write.
 # Overrides for tests: STORY_PLANS_DIR (the shared folder), STORY_CONFIG
 # (the config file).
 # Bash 3.2 compatible (the macOS /bin/bash).
@@ -32,8 +35,9 @@ story_plans_dir() {
   printf '%s/.plans\n' "${root}"
 }
 
-# story_config_file: from the main checkout root, the same file for every
-# worktree session and for the context-keeper mod. Without git, the project dir.
+# story_config_file: .claude/story.json of the main checkout root, the same
+# file for every worktree session and for the context-keeper mod. Without
+# git, the project dir.
 story_config_file() {
   if [ -n "${STORY_CONFIG:-}" ]; then
     printf '%s\n' "${STORY_CONFIG}"
@@ -41,8 +45,12 @@ story_config_file() {
   fi
   local root
   root="$(story_main_root)" || root="${CLAUDE_PROJECT_DIR:-.}"
-  printf '%s/.claude/skills/story/config.json\n' "${root}"
+  printf '%s/.claude/story.json\n' "${root}"
 }
+
+# story_enabled: the repo has opted in. Only a file test, so it works
+# without jq.
+story_enabled() { [ -f "$(story_config_file)" ]; }
 
 # story_config <key> <default>
 story_config() {

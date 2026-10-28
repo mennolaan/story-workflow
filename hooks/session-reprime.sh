@@ -7,6 +7,7 @@
 # runs again after each one.
 # Replaces plan-context.sh, which named the newest plan of the main checkout
 # to every session, also to a worktree session of another story.
+# Without .claude/story.json it prints nothing (story_enabled).
 # Informational: never blocks, always exits 0.
 set -uo pipefail
 
@@ -15,6 +16,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "${here}/story-lib.sh"
 
 input="$(cat)"
+story_enabled || exit 0
 src="$(jq -r '.source // empty' <<<"${input}" 2>/dev/null)"
 case "${src}" in
   startup|clear|compact|"") ;;

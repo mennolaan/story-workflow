@@ -1,0 +1,17 @@
+{
+  "checkpointPercent": 35,
+  "backstopTokens": 432000,
+  "baseBranch": "development",
+  "branch": "feature/{id}-{slug}",
+  "board": { "show": "az boards work-item show --org https://dev.azure.com/tme-lean --id {id}" },
+  "pr": { "create": "az repos pr create --draft --source-branch {branch} --target-branch {base} --work-items {ids} --title {title} --description {description}" },
+  "review": {
+    "plan": "/review-panel plan {plan} deep",
+    "changes": "/review-panel deep",
+    "pr": "/review-panel deep",
+    "fallback": "/review-grok"
+  },
+  "guard": { "deny": [] },
+  "planBoundary": false,
+  "conventions": "CLAUDE.md"
+}

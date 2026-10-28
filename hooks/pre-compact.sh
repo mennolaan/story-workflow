@@ -6,7 +6,8 @@
 # It never blocks a compaction: it prints nothing and always exits 0. A
 # blocked compaction at the backstop leaves a session that cannot continue.
 # Each failed step appends one line to <plans>/.sessions/<key>.log, the file
-# the context-keeper mod logs to.
+# the context-keeper mod logs to. Without .claude/story.json it does
+# nothing (story_enabled).
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -15,6 +16,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 {
   input="$(cat)"
+  story_enabled || exit 0
   dir="$(story_plans_dir)" || exit 0
   key="$(story_key "${input}")"
   note() { mkdir -p "${dir}/.sessions" && printf '%s pre-compact: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"${dir}/.sessions/${key:-unknown}.log"; }

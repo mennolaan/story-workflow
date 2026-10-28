@@ -15,6 +15,7 @@
 # build phase then re-read all of it on every call. One /compact at this point
 # was worth about 23 percent of that session.
 # The hook is informational. It never blocks and it always exits 0.
+# Without .claude/story.json it prints nothing (story_enabled).
 set -uo pipefail
 
 note() {  # note <text>; renders in the transcript for the user
@@ -30,6 +31,7 @@ input="$(cat)"
 # and the context-keeper mod), so this reminder stays silent there.
 # shellcheck source=story-lib.sh
 . "$(dirname "$0")/story-lib.sh"
+story_enabled || exit 0
 [ -n "$(story_binding "${input}")" ] && exit 0
 tool="$(jq -r '.tool_name // empty' <<<"${input}" 2>/dev/null)"
 file="$(jq -r '.tool_input.file_path // empty' <<<"${input}" 2>/dev/null)"

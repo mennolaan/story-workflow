@@ -55,6 +55,50 @@ long_state() { # long_state <file>: a checkpoint of 400+ characters
     printf 'CHECKPOINT-READY: %s | continue\n' "$1"; } >"$1"
 }
 
+# 0. a repo without .claude/story.json: every automatic hook is silent and
+# writes no .plans/. Real git checkouts, no STORY_PLANS_DIR, no STORY_CONFIG.
+bare_hook() { # bare_hook <project dir> <script> <json>: sets out and code
+  out="$(printf '%s' "$3" | env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID -u STORY_PLANS_DIR -u STORY_CONFIG \
+    CLAUDE_PROJECT_DIR="$1" TMPDIR="$1.tmp" "${hooks}/$2" 2>"${tmp}/stderr")"
+  code=$?
+}
+bare_all() { # bare_all <project dir>: runs every automatic hook, prints what each printed
+  local t
+  t="$(transcript "bare-$(basename "$1")" 360000 claude-opus-5-5)"
+  mkdir -p "$1.tmp"
+  bare_hook "$1" context-guard.sh "$(ptu nc-impl "${t}")"; printf '%s' "${out}"
+  bare_hook "$1" context-guard.sh "$(stop nc-impl "${t}")"; printf '%s' "${out}"
+  bare_hook "$1" session-reprime.sh '{"hook_event_name":"SessionStart","source":"startup","session_id":"nc-impl"}'; printf '%s' "${out}"
+  bare_hook "$1" pre-compact.sh "$(jq -cn --arg t "${t}" '{hook_event_name:"PreCompact",session_id:"nc-impl",trigger:"auto",transcript_path:$t}')"; printf '%s' "${out}"
+  bare_hook "$1" post-compact.sh '{"hook_event_name":"PostCompact","session_id":"nc-impl","trigger":"auto","compact_summary":"S"}'; printf '%s' "${out}"
+  bare_hook "$1" role-guard.sh "$(jq -cn '{hook_event_name:"PreToolUse",session_id:"nc-impl",tool_name:"Bash",tool_input:{command:"git push"}}')"; printf '%s' "${out}"
+  bare_hook "$1" role-guard.sh "$(jq -cn '{hook_event_name:"PreToolUse",session_id:"nc-impl",tool_name:"mcp__ccd_session_mgmt__clear_session",tool_input:{session_id:"x"}}')"; printf '%s' "${out}"
+  bare_hook "$1" lint-mark.sh '{"hook_event_name":"PreToolUse","session_id":"nc-impl","tool_name":"Bash","tool_input":{"command":"true"}}'; printf '%s' "${out}"
+  bare_hook "$1" plan-boundary.sh '{"hook_event_name":"PostToolUse","session_id":"nc-impl","tool_name":"Bash","tool_input":{"command":"true"}}'; printf '%s' "${out}"
+}
+listing() { find "$@" 2>/dev/null | sort; }
+nc="${tmp}/nocfg"
+mkdir -p "${nc}" && git -C "${nc}" init -q
+o="$(bare_all "${nc}")"
+[ -z "${o}" ] && [ ! -e "${nc}/.plans" ] && [ -z "$(listing "${nc}.tmp" -type f)" ] \
+  && pass "no config: no hook prints, and none writes .plans/ or a stamp" \
+  || fail "no config: a hook printed or wrote" "out: ${o}; files: $(listing "${nc}/.plans" "${nc}.tmp" -type f)"
+# A bound session in a repo that later lost its story.json.
+nb="${tmp}/nocfg-bound"
+mkdir -p "${nb}/.plans/.sessions/" "${nb}/.plans/story-n.d" && git -C "${nb}" init -q
+printf '{"role":"implement","slug":"story-n","state":"active","parent":"local_orch"}\n' >"${nb}/.plans/.sessions/nc-impl.json"
+printf '# Plan\n\n## Review\n' >"${nb}/.plans/story-n.md"
+before="$(listing "${nb}/.plans")"
+o="$(bare_all "${nb}")"
+[ -z "${o}" ] && [ "$(listing "${nb}/.plans")" = "${before}" ] \
+  && pass "no config: a bound child gets no re-prime, no guard and no file in .plans/" \
+  || fail "no config: a bound child got output or a new file" "out: ${o}; new: $(diff <(printf '%s\n' "${before}") <(listing "${nb}/.plans"))"
+mkdir -p "${nb}/.claude" && cp "${tmp}/config.json" "${nb}/.claude/story.json"
+o="$(bare_all "${nb}")"
+[[ "${o}" == *'IMPLEMENT session of story story-n'* && "${o}" == *'"permissionDecision":"deny"'* ]] && [ -e "${nb}/.plans/.sessions/nc-impl.crossed" ] \
+  && pass "config: the same inputs with .claude/story.json re-prime, guard and mark the crossing" \
+  || fail "config: .claude/story.json of the main checkout is not read" "out: ${o}"
+
 # 1. context-guard on PostToolUse
 t="$(transcript below 100000 claude-opus-5-5)"
 hook context-guard.sh "$(ptu s-below "${t}")"; [ -z "${out}" ] && pass "guard: below 35% is silent" || fail "guard: below 35% printed output" "${out}"
@@ -248,17 +292,17 @@ check_config "${tmp}/settings.json" "${tmp}/config-mismatch.json" && fail "confi
 # Fixture: a main checkout with checkpointPercent 35 and a worktree with 90.
 # The guard runs with the worktree as project dir and no STORY_CONFIG.
 main="${tmp}/main"
-mkdir -p "${main}/.claude/skills/story"
-printf '{"checkpointPercent": 35}\n' >"${main}/.claude/skills/story/config.json"
+mkdir -p "${main}/.claude"
+printf '{"checkpointPercent": 35, "planBoundary": true}\n' >"${main}/.claude/story.json"
 git -C "${main}" init -q && git -C "${main}" add . \
   && git -C "${main}" -c user.name=t -c user.email=t@t commit -qm init \
   && git -C "${main}" worktree add -q "${tmp}/wt" 2>/dev/null
-printf '{"checkpointPercent": 90}\n' >"${tmp}/wt/.claude/skills/story/config.json"
+printf '{"checkpointPercent": 90}\n' >"${tmp}/wt/.claude/story.json"
 t="$(transcript wt 400000 claude-opus-5-5)"
 out="$(ptu s-wt "${t}" | env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID -u STORY_CONFIG \
   STORY_PLANS_DIR="${plans}" CLAUDE_PROJECT_DIR="${tmp}/wt" "${hooks}/context-guard.sh" 2>"${tmp}/stderr")"
-[[ "${out}" == *additionalContext* ]] && pass "config: a worktree session reads config.json of the main checkout" \
-  || fail "config: the guard read the worktree config.json, not the main checkout's" "${out}"
+[[ "${out}" == *additionalContext* ]] && pass "config: a worktree session reads .claude/story.json of the main checkout" \
+  || fail "config: the guard read the worktree .claude/story.json, not the main checkout's" "${out}"
 mkdir -p "${main}/.plans"
 printf '# q\n\n## Review\n' >"${main}/.plans/q.md"
 out="$(jq -cn '{hook_event_name:"PostToolUse",session_id:"pb-wt",tool_name:"Bash",tool_input:{command:"true"}}' \
@@ -447,10 +491,10 @@ proj="${tmp}/proj"
 mkdir -p "${proj}/.plans"
 printf '# p\n\n## Review\n' >"${proj}/.plans/p.md"
 pb_in() { jq -cn --arg s "$1" --arg f "${proj}/.plans/p.md" '{hook_event_name:"PostToolUse",session_id:$s,tool_name:"Write",tool_input:{file_path:$f}}'; }
-o="$(printf '%s' "$(pb_in pb-free)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_PROJECT_DIR="${proj}" TMPDIR="${tmp}" "${hooks}/plan-boundary.sh")"
+o="$(printf '%s' "$(pb_in pb-free)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" STORY_CONFIG="${tmp}/config.json" CLAUDE_PROJECT_DIR="${proj}" TMPDIR="${tmp}" "${hooks}/plan-boundary.sh")"
 [[ "${o}" == *systemMessage* ]] && pass "plan-boundary: unbound still reminds" || fail "plan-boundary: unbound reminder gone" "${o}"
 bind pb-bound plan story-pb
-o="$(printf '%s' "$(pb_in pb-bound)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" CLAUDE_PROJECT_DIR="${proj}" TMPDIR="${tmp}" "${hooks}/plan-boundary.sh")"
+o="$(printf '%s' "$(pb_in pb-bound)" | env -u CLAUDE_CODE_HOST_SESSION_ID STORY_PLANS_DIR="${plans}" STORY_CONFIG="${tmp}/config.json" CLAUDE_PROJECT_DIR="${proj}" TMPDIR="${tmp}" "${hooks}/plan-boundary.sh")"
 [ -z "${o}" ] && pass "plan-boundary: a bound session is silent" || fail "plan-boundary: bound session reminded" "${o}"
 
 # 6. syntax and shellcheck

@@ -9,6 +9,7 @@
 #   az boards work-item, every command except show and relation show|list-type
 #   az pipelines run, az pipelines build queue
 # in Bash and in mcp__terminal__run_in_terminal (the user's own shell).
+# Without .claude/story.json every call passes with no output (story_enabled).
 # The orchestrator and unbound sessions pass. Heredoc bodies and quoted
 # strings are removed before the match, so a commit message or a notes file
 # that mentions "git push" is not a push. Kept, because they run: command
@@ -32,6 +33,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "${here}/story-lib.sh"
 
 input="$(cat)"
+story_enabled || exit 0
 if ! command -v jq >/dev/null 2>&1; then
   if grep -Eq '"tool_name"[[:space:]]*:[[:space:]]*"mcp__ccd_session_mgmt__clear_session"' <<<"${input}"; then
     printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"role-guard: jq is not on PATH, so the clear_session check did not run. Approve only the clear of your own idle child. Install jq (brew install jq)."}}'

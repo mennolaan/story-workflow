@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Claude Code PostToolUse (*) and Stop: the save half of the 35% context rule.
 # Procedure: skills/story/SKILL.md ("Context rule"), config in
-# .claude/skills/story/config.json (checkpointPercent).
+# .claude/story.json (checkpointPercent). Without that file it exits 0 at
+# once (story_enabled).
 #
 # The context size is the last main-chain assistant line of the transcript:
 # input + cache creation + cache read tokens. The window follows the model id
@@ -26,6 +27,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "${here}/story-lib.sh"
 
 input="$(cat)"
+story_enabled || exit 0
 if ! command -v jq >/dev/null 2>&1; then
   if grep -Eq '"hook_event_name"[[:space:]]*:[[:space:]]*"Stop"' <<<"${input}"; then
     printf '%s\n' '{"systemMessage":"context-guard: jq is not on PATH, so the 35% save rule does not run. Install it (brew install jq)."}'
@@ -44,9 +46,9 @@ key="$(story_key "${input}")"
 [ -n "${key}" ] || exit 0
 mark="${dir}/.sessions/${key}"
 window="$(story_window "${model:-unknown}")"
-# NOTE(eiffel): the same floor as MIN_WINDOW in the context-keeper mod. A session in
-# this repo starts near 100k tokens, so under a 400k window no compaction gets below
-# the save point and the rule would nudge and gate after every compaction.
+# The same floor as MIN_WINDOW in the context-keeper mod. A story session starts near
+# 100k tokens, so under a 400k window no compaction gets below the save point and the
+# rule would nudge and gate after every compaction.
 [ "${window}" -ge 400000 ] || exit 0
 pct="$(story_config checkpointPercent 35)"
 limit=$(( window * pct / 100 ))
