@@ -10,6 +10,9 @@
 #   az pipelines run, az pipelines build queue
 #   gh pr, every command except view, list, diff, checks, status and checkout
 #   gh issue, every command except view, list and status
+#   (gh flags such as -R <repo> may stand before or after pr and issue)
+#   gh api with a method other than GET, or with -f, -F, --field,
+#   --raw-field or --input and no explicit GET (gh then sends a POST)
 #   each Perl regex in "guard.deny" of .claude/story.json, matched with /m on
 #   the same cleaned command as the rules above
 # in Bash and in mcp__terminal__run_in_terminal (the user's own shell). A
@@ -123,14 +126,18 @@ hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" perl -e '
   $s =~ s{"((?:\\.|[^"\\])*)"}{ my $in = $1; my @subs = ($in =~ /\$\(([^()]*)\)/g); " Q " . join(" ; ", @subs) . " " }gse;
   my $b = qr/(?:^|[\s;&|(){}!`\/])/;
   my $opt = qr/(?:\s+(?:-C|-c)\s+\S+|\s+--?[A-Za-z][\w-]*(?:=\S+)?)*/;
+  my $end = qr/(?=\s|$|[;&|)])/;
+  my $gf = qr/(?:\s+--?[A-Za-z][\w-]*(?:[=\s](?!-)\S+)?)*/;
   my @rules = (
     [qr/${b}git${opt}\s+push\b/, "git push"],
     [qr/${b}az\s+repos\s+pr\s+(?!(?:show|list|checkout)\b|(?:policy|reviewer|work-item)\s+list\b)([a-z][a-z-]*(?:\s+[a-z][a-z-]*)?)/, "az repos pr"],
     [qr/${b}az\s+boards\s+work-item\s+(?!show\b|relation\s+(?:show|list-type)\b)([a-z][a-z-]*(?:\s+[a-z][a-z-]*)?)/, "az boards work-item"],
     [qr/${b}az\s+pipelines\s+run\b/, "az pipelines run"],
     [qr/${b}az\s+pipelines\s+build\s+queue\b/, "az pipelines build queue"],
-    [qr/${b}gh\s+pr\s+(?!(?:view|list|diff|checks|status|checkout)\b)([a-z][a-z-]*)/, "gh pr"],
-    [qr/${b}gh\s+issue\s+(?!(?:view|list|status)\b)([a-z][a-z-]*)/, "gh issue"],
+    [qr/${b}gh${gf}\s+pr${gf}\s+(?!(?:view|list|diff|checks|status|checkout)${end})([a-z][a-z-]*)${end}/, "gh pr"],
+    [qr/${b}gh${gf}\s+issue${gf}\s+(?!(?:view|list|status)${end})([a-z][a-z-]*)${end}/, "gh issue"],
+    [qr/${b}gh${gf}\s+api\b[^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)(?!GET${end})([A-Za-z]+)/, "gh api"],
+    [qr/${b}gh${gf}\s+api\b(?![^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)GET${end})[^\n;&|]*\s(-f|-F|--field|--raw-field|--input)${end}/, "gh api with"],
   );
   for my $r (@rules) {
     if ($s =~ $r->[0]) { my $x = $1 // ""; print "run " . $r->[1] . ($x ne "" ? " $x" : ""); exit 0; }

@@ -246,6 +246,17 @@ cmds=(
   "Bash|gh issue reopen 5"
   "Bash|gh issue delete 5 --yes"
   "Bash|cd x && /opt/homebrew/bin/gh pr create"
+  "Bash|gh pr -R o/r merge 1"
+  "Bash|gh pr --repo o/r merge 1"
+  "Bash|gh pr --repo=o/r create --fill"
+  "Bash|gh -R o/r pr create"
+  "Bash|gh --repo o/r pr create"
+  "Bash|gh issue -R o/r create --title x"
+  "Bash|gh api -X PUT repos/o/r/pulls/1/merge"
+  "Bash|gh api -XPOST repos/o/r/issues"
+  "Bash|gh api --method=PATCH repos/o/r/pulls/1"
+  "Bash|gh api repos/o/r/issues -f title=x"
+  "Bash|gh api repos/o/r/issues --input body.json"
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \
@@ -278,7 +289,7 @@ hook role-guard.sh "$(guard_in g-implement Bash "${subst}")"; [[ "${out}" == *de
 for c in "git status" "git commit -m x" "az repos pr show --id 5" "az repos pr list" "az repos pr reviewer list --id 5" "az boards work-item show --id 577" "az boards work-item relation show --id 5" "git log --oneline"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
-for c in "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
+for c in "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
 # 4g. guard.deny: Perl regexes from the config, matched like the built-in rules
