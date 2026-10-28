@@ -375,7 +375,11 @@ cb g-otherparent g-other-orch
 cb g-forged g-orchestrator g-someone-else
 printf '{"role":"implement","slug":"story-g","state":"active","parent":"g-orchestrator","session_id":"g-legacy"}\n' >"${plans}/.sessions/g-legacy.json"
 printf '{"role":"orchestrator","slug":"story-g","state":"active","parent":"","children":["g-child","g-otherparent","g-forged","g-legacy"]}\n' >"${plans}/.sessions/g-orchestrator.json"
+cp "${plans}/.sessions/g-child.json" "${plans}/.sessions/g-copy.json"
+jq '.children += ["g-copy"]' "${plans}/.sessions/g-orchestrator.json" >"${tmp}/orch.json" && mv "${tmp}/orch.json" "${plans}/.sessions/g-orchestrator.json"
 cs=mcp__ccd_session_mgmt__clear_session
+hook role-guard.sh "$(guard_in g-orchestrator "${cs}" g-copy)"
+[[ "${out}" == *'"permissionDecision":"ask"'* ]] && pass "clear-gate: a copy of an adopted binding under another name gets ask" || fail "clear-gate: a copied binding was allowed" "${out}"
 hook role-guard.sh "$(guard_in g-orchestrator "${cs}" g-child)"
 [[ "${out}" == *'"permissionDecision":"allow"'* ]] && [ "${code}" -eq 0 ] && pass "clear-gate: the orchestrator clears its own child with allow" || fail "clear-gate: own child not allowed" "${out}"
 hook role-guard.sh "$(guard_in g-implement "${cs}" g-child)"
