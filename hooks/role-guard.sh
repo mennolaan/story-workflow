@@ -148,10 +148,10 @@ tools="$(jq -r '(.guard.denyTools // []) | if type == "array" and all(.[]; type 
 # config and the settings files.
 protected_path() {
   local p
-  p="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  p="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's#//*#/#g' -e ':a' -e 's#/\./#/#' -e 'ta' -e 's#^\./##')"
   case "${p}" in
     "$(printf '%s' "${sessions}" | tr '[:upper:]' '[:lower:]')"/*|*/.sessions|*/.sessions/*|.sessions|.sessions/*) return 0 ;;
-    */.claude/story.json|.claude/story.json|*/.claude/settings.json|.claude/settings.json|*/.claude/settings.local.json|.claude/settings.local.json) return 0 ;;
+    */story.json|story.json|*/.claude/settings.json|.claude/settings.json|*/.claude/settings.local.json|.claude/settings.local.json) return 0 ;;
   esac
   return 1
 }

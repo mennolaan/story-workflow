@@ -336,6 +336,15 @@ cmds=(
   $'Bash|bash /dev/stdin <<\'E\'\ngit push\nE'
   $'Bash|while read l; do $l; done <<\'E\'\ngit push\nE'
   "Monitor|git push"
+  "Bash|rm .claude/./story.json"
+  "Bash|cd .claude && rm story.json"
+  "Bash|rm -rf .claude"
+  "Bash|rm .claude//story.json"
+  "Bash|echo \$(( \$(git push) + 1 ))"
+  "Bash|echo \"\$(( \$(git push) + 1 ))\""
+  "Bash|git \$'\\x70ush' origin HEAD"
+  "Bash|git \$'\\160ush'"
+  "Bash|export \"CLAUDE_CODE_HOST_SESSION_ID=x\""
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \
@@ -368,7 +377,7 @@ hook role-guard.sh "$(guard_in g-implement Bash "${subst}")"; [[ "${out}" == *de
 for c in "git status" "git commit -m x" "az repos pr show --id 5" "az repos pr list" "az repos pr reviewer list --id 5" "az boards work-item show --id 577" "az boards work-item relation show --id 5" "git log --oneline"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
-for c in $'git commit -m "$(cat <<\'EOF\'\nfix: don\'t push (nested\nand a backtick ` here\nEOF\n)"' "gh api graphql" "gh repo clone o/r" "gh run view 5" "gh release list" "az -o json boards work-item show --id 5" "az rest --method get --url x" "az pipelines runs list" "timeout 60 dotnet test" "find . -name '*.md' -exec grep -l foo {} +" "ls | xargs wc -l" "\$HOME/bin/tool x" "cd backend && dotnet test" "rm -rf /tmp/x" "cat .plans/.sessions/x.json" "echo \$((1<<3))" "git rebase -i HEAD~2" "git submodule update" "git config user.name" "echo gh pr create" "git commit -m \"do not git push\"" "command -v git" "grep -rn 'gh pr create' ." "printf '%s\\n' 'git push'" "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
+for c in "grep 'STORY_CONFIG=' README.md" "git commit -m 'CLAUDE_CODE_SESSION_ID=x'" "echo \$((1+2))" "echo \$((x<<2))" "cat .claude/story.json" "ls .claude" $'git commit -m "$(cat <<\'EOF\'\nfix: don\'t push (nested\nand a backtick ` here\nEOF\n)"' "gh api graphql" "gh repo clone o/r" "gh run view 5" "gh release list" "az -o json boards work-item show --id 5" "az rest --method get --url x" "az pipelines runs list" "timeout 60 dotnet test" "find . -name '*.md' -exec grep -l foo {} +" "ls | xargs wc -l" "\$HOME/bin/tool x" "cd backend && dotnet test" "rm -rf /tmp/x" "cat .plans/.sessions/x.json" "echo \$((1<<3))" "git rebase -i HEAD~2" "git submodule update" "git config user.name" "echo gh pr create" "git commit -m \"do not git push\"" "command -v git" "grep -rn 'gh pr create' ." "printf '%s\\n' 'git push'" "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
 # 4g. guard.deny: Perl regexes from the config, matched like the built-in rules
@@ -818,7 +827,7 @@ for t in mcp__filesystem__write_file mcp__filesystem__edit_file mcp__filesystem_
 done
 hook role-guard.sh "$(jq -cn --arg f "${plans}/.sessions/g-plan.json" '{hook_event_name:"PreToolUse",session_id:"g-implement",tool_name:"mcp__filesystem__read_file",tool_input:{path:$f}}')"
 [ -z "${out}" ] && pass "mcp: a child may read a binding file with a read tool" || fail "mcp: a read tool was denied" "${out}"
-for f in "${plans}/.SESSIONS/g-plan.json" ".claude/story.json" ".claude/settings.json"; do
+for f in "${plans}/.SESSIONS/g-plan.json" ".claude/story.json" ".claude/./story.json" ".claude//story.json" ".claude/settings.json"; do
   hook role-guard.sh "$(jq -cn --arg f "${f}" '{hook_event_name:"PreToolUse",session_id:"g-plan",tool_name:"Write",tool_input:{file_path:$f,content:"{}"}}')"
   [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "role-guard: a child Write to ${f##*/} is denied (case-insensitive)" || fail "role-guard: a child may Write ${f}" "${out}"
 done

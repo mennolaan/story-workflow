@@ -43,7 +43,7 @@ for my $re (grep { length } split /\n/, ($ENV{STORY_GUARD_DENY} // '')) {
 }
 
 
-sub newcmd { return { words => [], redirs => [], heredocs => [], herestrings => [], nested => [], pipe => 0 }; }
+sub newcmd { return { words => [], quoted => [], redirs => [], heredocs => [], herestrings => [], nested => [], pipe => 0 }; }
 
 # read_subst: from just after "$(" or "<(" to the matching ")". Returns the inner
 # text. $arith is true for $(( ... )): no heredocs and no comments there. It
@@ -108,6 +108,15 @@ sub read_subst {
 }
 
 # read_backtick: $$ip at the opening backtick. Returns the inner script.
+# read_arith: from just after "$((" to the matching ")". A command substitution
+# inside runs before the arithmetic, so the guard cannot skip it: parse error.
+sub read_arith {
+  my ($s, $ip) = @_;
+  my $inner = read_subst($s, $ip, 1);
+  die "an arithmetic expansion that holds a command substitution (\$( or a backtick)\n" if $inner =~ /\$\(|`/;
+  return $inner;
+}
+
 sub read_backtick {
   my ($s, $ip) = @_;
   my $n = length $s;
@@ -142,7 +151,7 @@ sub read_dq {
     }
     if ($ch eq '`') { push @{$cmd->{nested}}, read_backtick($s, $ip); $out .= '`...`'; next; }
     if ($ch eq '$' && substr($s, $$ip + 1, 1) eq '(') {
-      if (substr($s, $$ip + 2, 1) eq '(') { $$ip += 3; read_subst($s, $ip, 1); $out .= '$((...))'; next; }
+      if (substr($s, $$ip + 2, 1) eq '(') { $$ip += 3; read_arith($s, $ip); $out .= '$((...))'; next; }
       $$ip += 2;
       push @{$cmd->{nested}}, read_subst($s, $ip);
       $out .= '$(...)';
@@ -175,6 +184,7 @@ sub lex {
         undef $want;
       } else {
         push @{$cur->{words}}, $word;
+        push @{$cur->{quoted}}, $quoted;
       }
     }
     ($word, $inword, $quoted) = ('', 0, 0);
@@ -218,7 +228,7 @@ sub lex {
     if ($ch eq '$') {
       my $nx = substr($s, $i + 1, 1);
       if ($nx eq '(') {
-        if (substr($s, $i + 2, 1) eq '(') { $i += 3; read_subst($s, \$i, 1); $word .= '$((...))'; $inword = 1; next; }
+        if (substr($s, $i + 2, 1) eq '(') { $i += 3; read_arith($s, \$i); $word .= '$((...))'; $inword = 1; next; }
         $i += 2;
         push @{$cur->{nested}}, read_subst($s, \$i);
         $word .= '$(...)';
@@ -232,8 +242,15 @@ sub lex {
           die "an unclosed \$' quote\n" if $j >= $n;
           my $c = substr($s, $j, 1);
           if ($c eq '\\' && $j + 1 < $n) {
-            my $e = substr($s, $j + 1, 1);
-            $out .= $e eq 'n' ? "\n" : $e eq 't' ? "\t" : $e;
+            my $rest = substr($s, $j + 1);
+            if ($rest =~ /\A(?:x([0-9a-fA-F]{1,2})|([0-7]{1,3})|u([0-9a-fA-F]{1,4})|U([0-9a-fA-F]{1,8}))/) {
+              $out .= chr(defined $1 ? hex($1) : defined $2 ? oct($2) & 0xFF : hex($3 // $4));
+              $j += 1 + length $&;
+              next;
+            }
+            my $e = substr($rest, 0, 1);
+            my %esc = (n => "\n", t => "\t", r => "\r", a => "\a", b => "\b", e => "\e", E => "\e", f => "\f", v => "\x0b");
+            $out .= exists $esc{$e} ? $esc{$e} : $e;
             $j += 2;
             next;
           }
@@ -393,11 +410,20 @@ sub shell_script {
 
 # protected: a path the child never writes: a .sessions folder (case-insensitive,
 # globs included), the repo config and the settings files.
-sub protected {
+sub clean_path {
   my ($p) = @_;
   $p = lc $p;
+  $p =~ s{/+}{/}g;
+  1 while $p =~ s{(?:^|/)\.(?=/|$)}{}g;
+  1 while $p =~ s{[^/.][^/]*/\.\.(?:/|$)}{}g;
+  return $p;
+}
+
+sub protected {
+  my ($p) = @_;
+  $p = clean_path($p);
   return 1 if length $SESSIONS && index($p, lc $SESSIONS) == 0;
-  return 1 if $p =~ m{(?:^|/)\.claude/(?:story\.json|settings(?:\.local)?\.json)$};
+  return 1 if $p =~ m{(?:^|/)\.claude/settings(?:\.local)?\.json$} || $p =~ m{(?:^|/)story\.json$};
   for my $seg (split m{/}, $p) {
     return 1 if $seg eq '.sessions';
     next unless $seg =~ /[*?\[]/;
@@ -523,7 +549,7 @@ sub rules {
     return;
   }
   if ($cmd eq 'cd' || $cmd eq 'pushd') {
-    return "enter the binding folder ($cmd $a[1]). Only story-bind.sh of the orchestrator changes it" if defined $a[1] && protected($a[1]);
+    return "enter the binding folder or the .claude folder ($cmd $a[1]). Only story-bind.sh of the orchestrator changes them" if defined $a[1] && (protected($a[1]) || clean_path($a[1]) =~ m{(?:^|/)\.(?:claude|plans)/?$});
     return;
   }
   my $sedi = $cmd eq 'sed' && grep { /^-[A-Za-z]*i|^--in-place/ } @a[1 .. $#a];
@@ -531,7 +557,7 @@ sub rules {
     for my $w (@a[1 .. $#a]) {
       (my $path = $w) =~ s/^of=//;
       return "change the binding files or the repo config ($cmd $w). Only story-bind.sh of the orchestrator does that" if protected($path);
-      return "remove the plans folder ($cmd $w)" if $cmd =~ /^(?:rm|mv|rmdir|unlink)$/ && $path =~ m{(?:^|/)\.plans/?$};
+      return "remove the .plans or .claude folder ($cmd $w)" if $cmd =~ /^(?:rm|mv|rmdir|unlink)$/ && clean_path($path) =~ m{(?:^|/)\.(?:plans|claude)/?$};
     }
   }
   return;
@@ -635,8 +661,11 @@ sub analyse {
       return "deny\twrite to the binding files or the repo config ($r->[0] $r->[1]). Only story-bind.sh of the orchestrator does that"
         if $r->[0] =~ /^>/ && protected($r->[1]);
     }
-    for my $w (@{$c->{words}}) {
+    my $first = base(($c->{words}[0] // ''));
+    for my $wi (0 .. $#{$c->{words}}) {
+      my $w = $c->{words}[$wi];
       next unless $w =~ $ASSIGN;
+      next if $c->{quoted}[$wi] && $first !~ /^(?:export|declare|typeset|readonly|local|env|sh|bash|zsh)$/;
       (my $name = $w) =~ s/=.*//s;
       return "deny\tset $name in a command. The session identity and the story variables belong to the harness";
     }
