@@ -262,6 +262,24 @@ cmds=(
   "Bash|gh api repos/o/r/issues -Ftitle=x"
   "Bash|gh api repos/o/r/issues --field=title=x"
   "Bash|gh api repos/o/r/issues --input=b.json"
+  "Bash|gh pr \"merge\" 5"
+  "Bash|'gh' pr create"
+  "Bash|bash -c 'gh pr merge 5'"
+  "Bash|\$(gh pr merge 5)"
+  "Bash|env FOO=1 git push"
+  "Bash|git \"push\" origin HEAD"
+  "Bash|\\git push"
+  "Bash|echo \`gh pr create\`"
+  "Bash|echo \"\$(gh pr create --title \"\$(date)\")\""
+  "Bash|git --git-dir .git push"
+  "Bash|git commit -m \"fix: don't crash\" && gh pr create --title 'x'"
+  "Bash|sudo -u root git push"
+  "Bash|xargs -n1 git push"
+  "Bash|( git push )"
+  $'Bash|cat <<<hi\ngh pr create --fill'
+  $'Bash|echo "<<END"\ngit push origin HEAD'
+  $'Bash|echo $((1<<X))\ngit push'
+  $'Bash|cat <<EOF\n$(git push)\nEOF'
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \
@@ -294,15 +312,19 @@ hook role-guard.sh "$(guard_in g-implement Bash "${subst}")"; [[ "${out}" == *de
 for c in "git status" "git commit -m x" "az repos pr show --id 5" "az repos pr list" "az repos pr reviewer list --id 5" "az boards work-item show --id 577" "az boards work-item relation show --id 5" "git log --oneline"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
-for c in "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
+for c in "echo gh pr create" "git commit -m \"do not git push\"" "command -v git" "grep -rn 'gh pr create' ." "printf '%s\\n' 'git push'" "gh pr -R o/r view 5" "gh -R o/r pr list" "gh issue --repo o/r view 5" "gh api repos/o/r/pulls/1" "gh api -X GET repos/o/r/issues -f state=open" "gh api --method GET repos/o/r" "gh pr view 5" "gh pr list --state open" "gh pr diff 5" "gh pr checks 5" "gh pr status" "gh issue view 5" "gh issue list" "gh pr checkout 5" "git commit -m 'gh pr create stays with the orchestrator'"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")"; [ -z "${out}" ] && pass "role-guard: implement may run ${c}" || fail "role-guard: false positive on ${c}" "${out}"
 done
 # 4g. guard.deny: Perl regexes from the config, matched like the built-in rules
-printf '{"guard": {"deny": ["\\\\bterraform\\\\s+apply\\\\b", "^make deploy"]}}\n' >"${tmp}/guard.json"
+printf '{"guard": {"deny": ["^terraform\\\\s+apply\\\\b", "^make deploy", "api\\\\.prod\\\\.example\\\\.com"]}}\n' >"${tmp}/guard.json"
 hook role-guard.sh "$(guard_in g-implement Bash "cd infra && terraform apply -auto-approve")" STORY_CONFIG="${tmp}/guard.json"
 [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *guard.deny* ]] && pass "guard.deny: a child is denied a command that matches an entry" || fail "guard.deny: entry did not deny" "${out}"
 hook role-guard.sh "$(guard_in g-plan Bash "make deploy ENV=dev")" STORY_CONFIG="${tmp}/guard.json"
 [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "guard.deny: a second entry denies too" || fail "guard.deny: second entry did not deny" "${out}"
+for c in "terraform 'apply'" "curl -X POST \"https://api.prod.example.com/x\"" "env TF_LOG=1 terraform apply"; do
+  hook role-guard.sh "$(guard_in g-implement Bash "${c}")" STORY_CONFIG="${tmp}/guard.json"
+  [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "guard.deny: matches the unquoted words of ${c}" || fail "guard.deny: quoting hid ${c}" "${out}"
+done
 for c in "terraform plan" "git commit -m 'terraform apply later'" "make test"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")" STORY_CONFIG="${tmp}/guard.json"
   [ -z "${out}" ] && pass "guard.deny: a child may run ${c}" || fail "guard.deny: false positive on ${c}" "${out}"
@@ -315,6 +337,14 @@ printf '{"guard": {"deny": ["(unclosed"]}}\n' >"${tmp}/guard-bad.json"
 hook role-guard.sh "$(guard_in g-implement Bash "ls")" STORY_CONFIG="${tmp}/guard-bad.json"
 [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *'(unclosed'* ]] \
   && pass "guard.deny: a bad regex denies the child (fail closed) and names the entry" || fail "guard.deny: bad regex did not deny" "code ${code}, out: ${out}"
+for role in implement orchestrator unbound; do
+  hook role-guard.sh "$(guard_in "g-${role}" Bash 'git commit -m "oops')"
+  if [ "${role}" = implement ]; then
+    [[ "${out}" == *'"permissionDecision":"deny"'* && "${out}" == *"cannot parse"* ]] && pass "role-guard: an unbalanced quote denies a child (fail closed)" || fail "role-guard: an unbalanced quote passed a child" "${out}"
+  else
+    [ -z "${out}" ] && pass "role-guard: an unbalanced quote passes the ${role} with no parsing" || fail "role-guard: the ${role} was denied an unbalanced quote" "${out}"
+  fi
+done
 # 4i. a config the guard cannot read denies every call of a bound child (fail closed)
 printf '{"guard": {"deny": "terraform"}}\n' >"${tmp}/guard-str.json"
 printf '{"guard": {"deny": ["x"],}}\n' >"${tmp}/guard-broken.json"

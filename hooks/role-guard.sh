@@ -13,19 +13,14 @@
 #   (gh flags such as -R <repo> may stand before or after pr and issue)
 #   gh api with a method other than GET, or with -f, -F, --field,
 #   --raw-field or --input and no explicit GET (gh then sends a POST)
-#   each Perl regex in "guard.deny" of .claude/story.json, matched with /m on
-#   the same cleaned command as the rules above
-# in Bash and in mcp__terminal__run_in_terminal (the user's own shell). A
-# guard.deny value that is not a list of strings, or an entry that is not a
-# valid regex, exits 1 with the reason.
+#   each Perl regex in "guard.deny" of .claude/story.json
+# in Bash and in mcp__terminal__run_in_terminal (the user's own shell).
+# role-guard.pl parses the command into shell words, so a quoted verb
+# (gh pr "merge") is a verb and an argument (a commit message, echo text, a
+# grep pattern) is never a command. Its header lists what it parses and how
+# guard.deny matches. A command it cannot parse denies the child.
 # Without .claude/story.json every call passes with no output (story_enabled).
-# The orchestrator and unbound sessions pass. Heredoc bodies and quoted
-# strings are removed before the match, so a commit message or a notes file
-# that mentions "git push" is not a push. Kept, because they run: command
-# substitutions inside double quotes, the quoted script after
-# `bash|sh|zsh -c` or `eval`, a heredoc body on a line that names bash,
-# sh or zsh, and a quoted string that `<<<` or a pipe feeds to bash, sh or
-# zsh. A command after a path matches too (`/usr/bin/git push`).
+# The orchestrator and unbound sessions pass with no parsing.
 # mcp__ccd_session_mgmt__clear_session gets "allow" only for a bound
 # orchestrator whose target is bound with the orchestrator as its parent, so
 # the orchestrator resets its own idle child with no prompt. Every other call
@@ -122,58 +117,14 @@ broken=""
 extra="$(jq -r '(.guard.deny // []) | if type == "array" and all(.[]; type == "string") then .[] else error("guard.deny is not a list of strings") end' "${config}" 2>&1)" \
   || { broken="${extra}"; extra=""; }
 
-hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" perl -e '
-  local $/; my $s = <STDIN>;
-  my @out; my $delim; my $dash; my $keep;
-  for my $line (split /\n/, $s, -1) {
-    if (defined $delim) {
-      my $t = $dash ? ($line =~ s/^\t+//r) : $line;
-      if ($t eq $delim) { undef $delim; } elsif ($keep) { push @out, $line; }
-      next;
-    }
-    if ($line =~ /<<(-?)\s*([\x27"]?)([A-Za-z_][A-Za-z0-9_]*)\2/) { $dash = $1; $delim = $3; $keep = $line =~ /(?:^|[\s;&|(){}!`\/])(?:ba|z)?sh(?:\s|$)/; }
-    push @out, $line;
-  }
-  $s = join "\n", @out;
-  my $run = qr/(?:\b(?:ba|z)?sh(?:\s+--?[A-Za-z][\w-]*)*?\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--?[A-Za-z][\w-]*)*|\beval)\s+/;
-  $s =~ s/$run\x27([^\x27]*)\x27/ ; $1 ; /g;
-  $s =~ s/$run"((?:\\.|[^"\\])*)"/ ; $1 ; /gs;
-  my $sh = qr/(?:^|[\s;&|(){}!`\/])(?:ba|z)?sh\b/;
-  $s =~ s/(${sh}[^\n|;&]*<<<\s*)\x27([^\x27]*)\x27/$1 ; $2 ; /g;
-  $s =~ s/(${sh}[^\n|;&]*<<<\s*)"((?:\\.|[^"\\])*)"/$1 ; $2 ; /gs;
-  $s =~ s/\x27([^\x27]*)\x27(?=[^\n;&]*\|\s*(?:\S*\/)?(?:ba|z)?sh\b)/ ; $1 ; /g;
-  $s =~ s/"((?:\\.|[^"\\])*)"(?=[^\n;&]*\|\s*(?:\S*\/)?(?:ba|z)?sh\b)/ ; $1 ; /gs;
-  $s =~ s/\x27[^\x27]*\x27/ Q /g;
-  $s =~ s{"((?:\\.|[^"\\])*)"}{ my $in = $1; my @subs = ($in =~ /\$\(([^()]*)\)/g); " Q " . join(" ; ", @subs) . " " }gse;
-  my $b = qr/(?:^|[\s;&|(){}!`\/])/;
-  my $opt = qr/(?:\s+(?:-C|-c)\s+\S+|\s+--?[A-Za-z][\w-]*(?:=\S+)?)*/;
-  my $end = qr/(?=\s|$|[;&|)])/;
-  my $gf = qr/(?:\s+--?[A-Za-z][\w-]*(?:[=\s](?!-)\S+)?)*/;
-  my @rules = (
-    [qr/${b}git${opt}\s+push\b/, "git push"],
-    [qr/${b}az\s+repos\s+pr\s+(?!(?:show|list|checkout)\b|(?:policy|reviewer|work-item)\s+list\b)([a-z][a-z-]*(?:\s+[a-z][a-z-]*)?)/, "az repos pr"],
-    [qr/${b}az\s+boards\s+work-item\s+(?!show\b|relation\s+(?:show|list-type)\b)([a-z][a-z-]*(?:\s+[a-z][a-z-]*)?)/, "az boards work-item"],
-    [qr/${b}az\s+pipelines\s+run\b/, "az pipelines run"],
-    [qr/${b}az\s+pipelines\s+build\s+queue\b/, "az pipelines build queue"],
-    [qr/${b}gh${gf}\s+pr${gf}\s+(?!(?:view|list|diff|checks|status|checkout)${end})([a-z][a-z-]*)${end}/, "gh pr"],
-    [qr/${b}gh${gf}\s+issue${gf}\s+(?!(?:view|list|status)${end})([a-z][a-z-]*)${end}/, "gh issue"],
-    [qr/${b}gh${gf}\s+api\b[^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)(?!GET${end})([A-Za-z]+)/, "gh api"],
-    [qr/${b}gh${gf}\s+api\b(?![^\n;&|]*\s(?:-X\s*|--method[=\s]\s*)GET${end})[^\n;&|]*\s(-[fF]|--field(?=[=\s]|$)|--raw-field(?=[=\s]|$)|--input(?=[=\s]|$))/, "gh api with"],
-  );
-  for my $r (@rules) {
-    if ($s =~ $r->[0]) { my $x = $1 // ""; print "run " . $r->[1] . ($x ne "" ? " $x" : ""); exit 0; }
-  }
-  for my $re (grep { length } split /\n/, ($ENV{STORY_GUARD_DENY} // "")) {
-    my $q = eval { qr/$re/m };
-    if (!defined $q) { (my $e = $@) =~ s/ at -e line .*//s; print "BAD\t$re\t$e"; exit 0; }
-    if ($s =~ $q) { print "run a command that matches the guard.deny entry $re"; exit 0; }
-  }
-')"
-case "${hit}" in
-  BAD$'\t'*)
-    IFS=$'\t' read -r _ re why <<<"${hit}"
-    deny "run any command while the guard.deny entry '${re}' in ${config} is not a valid Perl regex (${why}). Ask the orchestrator to fix the entry" ;;
+sessions="$(story_plans_dir 2>/dev/null)/.sessions"
+hit="$(printf '%s' "${cmd}" | STORY_GUARD_DENY="${extra}" STORY_SESSIONS_DIR="${sessions}" perl "${here}/role-guard.pl")" \
+  || deny "run a command while the command check (role-guard.pl) failed. Ask the orchestrator to check perl"
+IFS=$'\t' read -r kind what why <<<"${hit}"
+case "${kind}" in
+  deny) deny "${what}" ;;
+  parse) deny "run a command that the guard cannot parse: ${what}. Rewrite it with balanced quotes" ;;
+  bad) deny "run any command while the guard.deny entry '${what}' in ${config} is not a valid Perl regex (${why}). Ask the orchestrator to fix the entry" ;;
 esac
-[ -n "${hit}" ] && deny "${hit}"
 [ -n "${broken}" ] && deny "run any command while ${config} cannot be read as a list of guard.deny regex strings (${broken}). Ask the orchestrator to fix the file"
 exit 0

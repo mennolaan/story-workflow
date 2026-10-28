@@ -67,7 +67,7 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `board.show` | The command that prints a story and its tasks. `{id}` is the work item id. |
 | `pr.create` | The command that opens a draft PR. Placeholders: `{branch}`, `{base}`, `{ids}`, `{title}`, `{description}`. Without it the orchestrator asks you how to open the PR. |
 | `review` | Optional. `plan` (`{plan}` is the plan path), `changes`, `pr`, and `fallback` (run when the review command stops because a tool is missing). Without it the sessions skip the review and say so. |
-| `guard.deny` | Extra Perl regexes. The role guard denies a child session every shell command that matches one. |
+| `guard.deny` | Extra Perl regexes. The role guard splits a shell command into simple commands, removes the quotes, and joins the words of each simple command with single spaces. A regex that matches that text (with `/m`) denies the child session the command. It also sees the scripts that the command runs: `bash -c`, `eval`, `$(...)` and heredocs fed to a shell. A regex also matches argument text, so anchor it with `^` to match only a command, for example `^terraform\\s+apply\\b`. |
 | `planBoundary` | `true` turns on the plan-boundary reminder and its stamp hook. Default `false`. |
 | `conventions` | Not read yet. The briefs send each session to the repo's `CLAUDE.md` for its conventions and checks. |
 
