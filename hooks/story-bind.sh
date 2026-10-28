@@ -41,7 +41,9 @@
 # checks every model a file names plus all others, and refuses when any of
 # them is over. Not visible here: server-managed settings, the embedding host's
 # managed settings, --settings and --autocompact. A file that is not a JSON
-# object counts as empty, as Claude Code skips it.
+# object counts as empty, as Claude Code skips it. A value that is not a JSON
+# number ("400000", "auto") counts as over the backstop, because Claude Code
+# expects a number and may drop it.
 # Overrides for tests: STORY_MANAGED_DIR, STORY_MANAGED_PLIST.
 set -uo pipefail
 
@@ -127,7 +129,7 @@ backstop_gate() {
         end;
       ([$sc[] | (.modelSettings // {}) | objects | to_entries[] | select(.value | type == "object" and .autoCompactWindow != null) | .key] | unique) + ["*"]
     | .[] as $m
-    | (first(range(0; $sc | length) as $i | w($sc[$i]; $m) | select(. != null) | [$m, (. | tostring), $names[$i]]) // [$m, "", ""])
+    | (first(range(0; $sc | length) as $i | w($sc[$i]; $m) | select(. != null) | [$m, (if type == "number" then tostring else tojson end), $names[$i]]) // [$m, "", ""])
     | @tsv' "managed settings" "${local_f}" "${proj_f}" "${user_f}")" \
     || fail "cannot read the settings files with jq, so the backstop check did not run."
   while IFS=$'\t' read -r model value from; do
@@ -136,7 +138,7 @@ backstop_gate() {
     if [ -z "${value}" ]; then
       bad="${bad} No autoCompactWindow is set for ${model}."
     elif ! [[ "${value}" =~ ^[0-9]+$ ]] || [ "${value}" -gt "${max}" ]; then
-      bad="${bad} The effective autoCompactWindow for ${model} is ${value} from ${from}."
+      bad="${bad} The effective autoCompactWindow for ${model} is ${value} from ${from}, which is not a token count at or below the backstop."
     fi
   done <<<"${lines}"
   [ -z "${bad}" ] && return 0

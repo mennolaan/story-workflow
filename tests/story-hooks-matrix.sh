@@ -643,6 +643,10 @@ printf '{"autoCompactWindow": 432000, "modelSettings": {"claude-opus-5-5": {"aut
 bs "a user modelSettings window under a project top-level key" bind
 printf '{"autoCompactWindow": 432000, "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": "auto"}}}\n' >"${proj_s}"
 bs "a project modelSettings window \"auto\" in the same file" refuse
+printf '{"autoCompactWindow": "400000"}\n' >"${proj_s}"
+bs "a project autoCompactWindow that is a string, not a number" refuse
+printf '{"autoCompactWindow": 432000, "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": "400000"}}}\n' >"${proj_s}"
+bs "a modelSettings autoCompactWindow that is a string" refuse
 printf '{"autoCompactWindow": 432000}\n' >"${proj_s}"
 bs "CLAUDE_CODE_AUTO_COMPACT_WINDOW 1M over project 432000" refuse CLAUDE_CODE_AUTO_COMPACT_WINDOW=1M
 bs "CLAUDE_CODE_AUTO_COMPACT_WINDOW 400k" bind CLAUDE_CODE_AUTO_COMPACT_WINDOW=400k
