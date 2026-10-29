@@ -26,6 +26,16 @@ Run step 1. When `story-bind.sh` exits 1, stop: show its message and write no fi
 
 At most 60 lines. Newest facts first. Facts only, no narration.
 
+Write the file with one Bash command: a quoted heredoc to the absolute path that step 1 printed.
+
+```bash
+cat > "<path>" <<'CHECKPOINT_EOF'
+...the whole file...
+CHECKPOINT_EOF
+```
+
+Never use the Write or Edit tool for this file. In a desktop worktree session the app refuses Write and Edit on a path in the main checkout, and the state path is there.
+
 Header:
 
 ```

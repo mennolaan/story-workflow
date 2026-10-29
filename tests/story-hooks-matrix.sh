@@ -766,6 +766,19 @@ o="$(sbx CLAUDE_CODE_SESSION_ID=k-bound -- implement story-k --parent k-orch 2>&
 o="$(sbx CLAUDE_CODE_HOST_SESSION_ID=local_hk CLAUDE_CODE_SESSION_ID=uuid-hk -- implement story-k --parent k-orch 2>&1)"
 [ "$(jq -r '.key + "/" + .session_id' "${plans}/.sessions/local_hk.json")" = local_hk/uuid-hk ] && pass "story-bind: with a host id the key is the host id and session_id stays the Claude Code id" || fail "story-bind: key and session_id" "$(cat "${plans}/.sessions/local_hk.json")"
 
+# /checkpoint writes the state file with a quoted heredoc in one Bash command, also from a child.
+ck_body=$'# Checkpoint\nDone: git push stays with the orchestrator\nCHECKPOINT-READY: x | continue'
+for role in plan implement pr-review; do
+  kb "g-ck-${role}" "${role}" story-g local_orch
+  ck="cat > \"${plans}/story-g.d/${role}.md\" <<'CHECKPOINT_EOF'"$'\n'"${ck_body}"$'\nCHECKPOINT_EOF'
+  hook role-guard.sh "$(guard_in "g-ck-${role}" Bash "${ck}")"
+  [ -z "${out}" ] && [ "${code}" -eq 0 ] && pass "checkpoint: a ${role} child writes <slug>.d/${role}.md with a quoted heredoc" || fail "checkpoint: the ${role} state write was stopped" "${out}"
+  ck="cat > \"${plans}/.sessions/g-ck-${role}.json\" <<'CHECKPOINT_EOF'"$'\n'"${ck_body}"$'\nCHECKPOINT_EOF'
+  hook role-guard.sh "$(guard_in "g-ck-${role}" Bash "${ck}")"
+  [[ "${out}" == *'"permissionDecision":"deny"'* ]] && pass "checkpoint: a ${role} child heredoc into .sessions/ is denied" || fail "checkpoint: a ${role} heredoc into .sessions/ passed" "${out}"
+done
+grep -q 'cat > "<path>" <<.CHECKPOINT_EOF.' "${repo}/skills/checkpoint/SKILL.md" && grep -q 'Never use the Write or Edit tool for this file' "${repo}/skills/checkpoint/SKILL.md" \
+  && pass "checkpoint: the skill writes the state file with a Bash heredoc, never Write or Edit" || fail "checkpoint: the skill does not say to write with a Bash heredoc"
 # A child does not write the binding files.
 kb g-plan plan story-g local_orch
 for c in "rm .plans/.sessions/x.json" "rm -f ${plans}/.sessions/g-orchestrator.json" "printf '{}' > \"${plans}/.sessions/g-plan.json\"" "sed -i '' s/plan/orchestrator/ .plans/.sessions/g-plan.json" "cp /tmp/x.json .plans/.sessions/g-plan.json"; do
