@@ -1,6 +1,6 @@
 # story-workflow
 
-A Claude Code plugin that runs one board story through one orchestrator session. Handoff sessions plan, implement and review. Only the orchestrator asks you questions and acts outward (board, push, PR). Every session saves its state at 35% context and compacts at the next turn boundary, with no keystroke from you.
+A Claude Code plugin that runs one board story through one orchestrator session. Handoff sessions plan, implement and review. Only the orchestrator asks you questions and acts outward (board, push, PR). Every session saves its state at its save point (350k tokens for a 1M model) and compacts at the next turn boundary, with no keystroke from you.
 
 The plugin holds:
 
@@ -58,7 +58,7 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 
 | Field | Meaning |
 |---|---|
-| `checkpointPercent` | Save point in percent of the context window. Default 35. |
+| `checkpointPercent` | Save point in percent of the model window. Default 35. The save point is `checkpointPercent` (35) of the model window: 350k tokens for a 1M model (Opus 5.5, Fable). The desktop composer and `/context` show percent of `autoCompactWindow` (432000), so the save point shows as 81% there and the backstop compaction starts at 92%. |
 | `backstopTokens` | The highest allowed `autoCompactWindow`. Default 432000. |
 | `baseBranch` | The branch that feature branches start from and PRs target, for example `main`. |
 | `branch` | The feature branch name. `{id}` is the work item id, `{slug}` the short name. |

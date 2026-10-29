@@ -1,6 +1,6 @@
 ---
 name: story
-description: Run one board story as its orchestrator. This session talks to the user and does every outward action. Handoff sessions plan, implement and review, report back by status token, and never ask the user. Every session saves its state at 35% context and compacts at the next turn boundary.
+description: Run one board story as its orchestrator. This session talks to the user and does every outward action. Handoff sessions plan, implement and review, report back by status token, and never ask the user. Every session saves its state at its save point (checkpointPercent of the model window, 350k tokens for a 1M model) and compacts at the next turn boundary.
 argument-hint: <work item id>
 disable-model-invocation: true
 ---
@@ -133,7 +133,7 @@ The session title shows the state: one emoji, then `<Role> · <story id> <short 
 
 ## Phased turns and steering
 
-The context rule acts only at a turn boundary, and the orchestrator hears nothing until a child's turn ends. One long turn can pass 35% with no boundary, and the backstop then compacts in the middle of the work.
+The context rule acts only at a turn boundary, and the orchestrator hears nothing until a child's turn ends. One long turn can pass the save point with no boundary, and the backstop then compacts in the middle of the work.
 
 1. **One phase per turn.**
    - Each brief lists its phases in order, one board task each.
@@ -144,7 +144,7 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
    - On the side-sessions event, check four things: the status line, the commit (`git log -1 <sha>` in the child's worktree), the child's context (`get_usage`) and any new deviation in the child's state section.
    - Then send `next: #<task>` by the peer route (rule 3).
    - Ask the user only when a deviation needs a decision that the plan does not settle.
-   - When the child is at or above 35% and its mod is not live, first ask it for `/checkpoint`. Then clear it (`clear_session`) and send `Continue from <state path>`.
+   - When the child is at or above the save point (350k tokens for a 1M model) and its mod is not live, first ask it for `/checkpoint`. Then clear it (`clear_session`) and send `Continue from <state path>`.
 3. **Steer in the middle of a phase.**
    - Send a correction to the peer name from `ListAgents`, for example `Implement · 577 x [722163]`. The child reads it between tool calls.
    - Never send it to the `local_...` id while the child is busy. That route holds the message until the turn ends.
@@ -169,6 +169,8 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
 ## Context rule
 
 `.claude/story.json` of the repo holds the numbers (`checkpointPercent`, default 35; `backstopTokens`, default 432000). A plugin cannot set `autoCompactWindow`, so the repo sets it in `.claude/settings.json`. `story-bind.sh` refuses to bind when the effective `autoCompactWindow` is missing or above `backstopTokens`, and its message names the file to fix.
+
+The save point is `checkpointPercent` (35) of the model window: 350k tokens for a 1M model (Opus 5.5, Fable). The desktop composer and `/context` show percent of `autoCompactWindow` (432000), so the save point shows as 81% there and the backstop compaction starts at 92%.
 
 Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A story session starts near 100k tokens, so on a 200K window no compaction gets below the save point.
 

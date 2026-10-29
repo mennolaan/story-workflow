@@ -632,6 +632,15 @@ jq -e '(.review | not) and (.board.show | type == "string") and (.pr.create | ty
 printf 'git merge-base --is-ancestor origin/development HEAD\n' >"${tmp}/fact.md"
 [ -n "$(repo_facts "${tmp}/fact.md")" ] && pass "repo facts: origin/development in a brief fails" || fail "repo facts: origin/development passed"
 
+# 4k. the save point is named in tokens, or as a percent of the model window with the composer number beside it
+o="$(grep -n '35%' "${repo}/README.md" "${story}"/SKILL.md "${story}"/briefs/*.md "${story}/ledger.md" "${repo}/skills/checkpoint/SKILL.md" "${hooks}"/*.sh "${hooks}/register.tsx" 2>/dev/null)"
+[ -z "${o}" ] && pass "docs: no file holds a bare 35% that a reader could take for the composer number" || fail "docs: a bare 35% is left" "${o}"
+for f in "${repo}/README.md" "${story}/SKILL.md"; do
+  grep -q 'save point shows as 81% there and the backstop compaction starts at 92%' "${f}" && pass "docs: $(basename "${f}") explains that the composer shows 81% at the save point" || fail "docs: $(basename "${f}") lacks the composer note"
+done
+printf 'Every session saves its state at 35%% context.\n' >"${tmp}/bare.md"
+grep -q '35%' "${tmp}/bare.md" && pass "docs: a bare 35% is found by the check" || fail "docs: the bare 35% check finds nothing"
+
 # 5. pre-compact and post-compact
 bind s-pc implement story-p
 long_state "${plans}/story-p.d/implement.md"
