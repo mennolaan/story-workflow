@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code PostToolUse (*) and Stop: the save half of the 35% context rule.
+# Claude Code PostToolUse (*) and Stop: the save half of the context rule.
 # Procedure: skills/story/SKILL.md ("Context rule"), config in
 # .claude/story.json (checkpointPercent). Without that file it exits 0 at
 # once (story_enabled).
@@ -7,7 +7,10 @@
 # The context size is the last main-chain assistant line of the transcript:
 # input + cache creation + cache read tokens. The window follows the model id
 # (story_window). Under a 400k window the rule is off: silent, no nudge, no
-# gate. At or above checkpointPercent of the window, the first time
+# gate. The save point is checkpointPercent (35) of the model window: 350000
+# tokens for a 1M model. The texts name tokens only, because the desktop
+# composer and /context show a percent of autoCompactWindow (432000), where
+# the same save point reads 81%. At or above the save point, the first time
 # is the crossing; .plans/.sessions/<key>.crossed holds its epoch. A
 # checkpoint is fresh when it exists, holds 400+ characters and is not older
 # than the crossing.
@@ -30,7 +33,7 @@ input="$(cat)"
 story_enabled || exit 0
 if ! command -v jq >/dev/null 2>&1; then
   if grep -Eq '"hook_event_name"[[:space:]]*:[[:space:]]*"Stop"' <<<"${input}"; then
-    printf '%s\n' '{"systemMessage":"context-guard: jq is not on PATH, so the 35% save rule does not run. Install it (brew install jq)."}'
+    printf '%s\n' '{"systemMessage":"context-guard: jq is not on PATH, so the save rule does not run. Install it (brew install jq)."}'
   fi
   exit 0
 fi
@@ -52,7 +55,6 @@ window="$(story_window "${model:-unknown}")"
 [ "${window}" -ge 400000 ] || exit 0
 pct="$(story_config checkpointPercent 35)"
 limit=$(( window * pct / 100 ))
-now_pct=$(( tokens * 100 / window ))
 
 if [ "${tokens}" -lt "${limit}" ]; then
   rm -f "${mark}.crossed" "${mark}.nudged" "${mark}.blocked" 2>/dev/null
@@ -72,14 +74,14 @@ case "${event}" in
   PostToolUse)
     [ "$(cat "${mark}.nudged" 2>/dev/null)" = "${crossed}" ] && exit 0
     printf '%s\n' "${crossed}" >"${mark}.nudged"
-    jq -cn --arg c "Context ${now_pct}% (${tokens} of ${window} tokens), at or above the ${pct}% save point. At the next safe moment (a finished step, never mid-edit or mid-gate) run /checkpoint. It writes ${state}." \
+    jq -cn --arg c "Context ${tokens} tokens, at or above the save point of ${limit} tokens. At the next safe moment (a finished step, never mid-edit or mid-gate) run /checkpoint. It writes ${state}." \
       '{hookSpecificOutput:{hookEventName:"PostToolUse",additionalContext:$c}}'
     ;;
   Stop)
     [ "$(jq -r '.stop_hook_active // false' <<<"${input}" 2>/dev/null)" = true ] && exit 0
     [ "$(cat "${mark}.blocked" 2>/dev/null)" = "${crossed}" ] && exit 0
     printf '%s\n' "${crossed}" >"${mark}.blocked"
-    jq -cn --arg r "Context ${now_pct}% (${tokens} of ${window} tokens) and no fresh checkpoint at ${state}. Run /checkpoint now, then end the turn as you planned." \
+    jq -cn --arg r "Context ${tokens} tokens, past the save point of ${limit} tokens, and no fresh checkpoint at ${state}. Run /checkpoint now, then end the turn as you planned." \
       '{decision:"block",reason:$r}'
     ;;
 esac

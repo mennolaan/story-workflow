@@ -105,7 +105,9 @@ hook context-guard.sh "$(ptu s-below "${t}")"; [ -z "${out}" ] && pass "guard: b
 t="${tmp}/cache.jsonl"
 printf '{"type":"assistant","isSidechain":false,"message":{"model":"claude-opus-5-5","usage":{"input_tokens":10000,"cache_creation_input_tokens":0,"cache_read_input_tokens":350000}}}\n' >"${t}"
 hook context-guard.sh "$(ptu s-cache "${t}")"
-[[ "${out}" == *"360000 of 1000000"* ]] && pass "guard: cache-read tokens count toward the context (360000)" || fail "guard: cache-read tokens not counted" "${out}"
+[[ "${out}" == *"Context 360000 tokens, at or above the save point of 350000 tokens. At the next safe moment (a finished step, never mid-edit or mid-gate) run /checkpoint. It writes "* ]] \
+  && pass "guard: cache-read tokens count toward the context (360000), the nudge names tokens" || fail "guard: cache-read tokens not counted, or the nudge text is wrong" "${out}"
+[[ "$(jq -r '.hookSpecificOutput.additionalContext' <<<"${out}")" != *%* ]] && pass "guard: the nudge holds no percent that a reader could take for the composer number" || fail "guard: the nudge holds a percent" "${out}"
 
 t="$(transcript cross 360000 claude-opus-5-5)"
 hook context-guard.sh "$(ptu s-cross "${t}")"; o="${out}"
@@ -142,6 +144,8 @@ printf '{"checkpointPercent": 35, "backstopTokens": 432000, "planBoundary": true
 t="$(transcript stop 360000 claude-opus-5-5)"
 hook context-guard.sh "$(stop s-stop "${t}")"; o="${out}"
 [[ "${o}" == *'"decision":"block"'* ]] && pass "stop: a stale checkpoint blocks" || fail "stop: no block on a stale checkpoint" "${o}"
+[[ "$(jq -r '.reason' <<<"${o}")" == "Context 360000 tokens, past the save point of 350000 tokens, and no fresh checkpoint at ${plans}/.sessions/s-stop.md. Run /checkpoint now, then end the turn as you planned." ]] \
+  && pass "stop: the block names tokens, the save point and the state file, with no percent" || fail "stop: the block text is wrong" "${o}"
 hook context-guard.sh "$(stop s-stop "${t}")"; [ -z "${out}" ] && pass "stop: one block per crossing" || fail "stop: blocked twice" "${out}"
 hook context-guard.sh "$(stop s-active "${t}" true)"; [ -z "${out}" ] && pass "stop: stop_hook_active passes" || fail "stop: blocked with stop_hook_active" "${out}"
 bind s-fresh implement story-a
@@ -167,7 +171,7 @@ hook context-guard.sh "$(stop s-cb "${t}")" STORY_CONFIG="${tmp}/config5.json"
 [ -z "${out}" ] && pass "stop: no usage after a compact_boundary, no block" || fail "stop: old usage before the boundary blocked" "${out}"
 printf '{"type":"assistant","isSidechain":false,"message":{"model":"claude-opus-5-5","usage":{"input_tokens":95957,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' >>"${t}"
 hook context-guard.sh "$(ptu s-cb "${t}")" STORY_CONFIG="${tmp}/config5.json"
-[[ "${out}" == *"Context 9% (95957 of 1000000"* ]] && pass "guard: usage after the boundary counts (9%)" || fail "guard: usage after the boundary not read" "${out}"
+[[ "${out}" == *"Context 95957 tokens, at or above the save point of 50000 tokens."* ]] && pass "guard: usage after the boundary counts (95957 tokens)" || fail "guard: usage after the boundary not read" "${out}"
 
 # 3. session-reprime
 bind s-impl implement story-b
@@ -659,7 +663,7 @@ t="$(transcript nojq 360000 claude-opus-5-5)"
 hook context-guard.sh "$(ptu s-nojq "${t}")" PATH="${tmp}/nojq"
 [ -z "${out}" ] && [ "${code}" -eq 0 ] && pass "guard: without jq a tool call stays silent and exits 0" || fail "guard: without jq PostToolUse printed or failed" "code ${code}, out: ${out}"
 hook context-guard.sh "$(stop s-nojq "${t}")" PATH="${tmp}/nojq"
-[ "${code}" -eq 0 ] && [ "$(jq -r '.systemMessage // empty' <<<"${out}" 2>/dev/null)" != "" ] && [[ "${out}" == *'jq is not on PATH'* ]] \
+[ "${code}" -eq 0 ] && [ "$(jq -r '.systemMessage // empty' <<<"${out}" 2>/dev/null)" = "context-guard: jq is not on PATH, so the save rule does not run. Install it (brew install jq)." ] \
   && pass "guard: without jq Stop prints a systemMessage for the user" || fail "guard: without jq Stop printed no systemMessage" "code ${code}, out: ${out}"
 for c in "git push" "ls"; do
   hook role-guard.sh "$(guard_in g-implement Bash "${c}")" PATH="${tmp}/nojq"
