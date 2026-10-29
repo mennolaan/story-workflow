@@ -68,7 +68,7 @@ The last line of the file is exactly:
 CHECKPOINT-READY: <absolute path of this file> | continue
 ```
 
-- Use `continue` when the next action needs no answer from anyone. After the compaction the context-keeper mod sends "Continue from <path>: next action <...>".
+- Use `continue` when the next action needs no answer from anyone. 3 seconds after the compaction ends, the context-keeper mod reads the file again and sends "Continue from <path>: next action <...>". It sends nothing when a prompt came or the file changed after the compaction.
 - Use `wait` when the next action waits on the orchestrator or the user. Then nothing resumes by itself.
 
 ## 4. Then

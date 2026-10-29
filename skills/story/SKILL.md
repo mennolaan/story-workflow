@@ -180,7 +180,7 @@ Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A st
 4. **Compact.** The context-keeper mod (`hooks/register.tsx` of this plugin) compacts at the turn boundary once the checkpoint is fresh. With a stale checkpoint it runs `/checkpoint` once, then shows a toast.
 5. **Steer.** The mod adds the role and the state path to the instructions of every compaction.
 6. **Re-prime.** `session-reprime.sh` (SessionStart `startup|clear|compact`) prints the role card, the paths and the saved state of a bound session.
-7. **Resume.** After a `continue` checkpoint the mod sends `Continue from <path>: next action <...>`. Not after `wait`, an aborted turn, a draft in the prompt box or a prompt from the person.
+7. **Resume.** After a `continue` checkpoint the mod sends `Continue from <path>: next action <...>`, 3 seconds after the compaction ends. Not after `wait`, an aborted turn, a draft in the prompt box, a prompt from the person or the host, or a checkpoint written after the compaction. A turn that runs at that time moves the check to its end.
 8. **Backstop.** Without the mod, auto-compaction runs at about 400k tokens (40% of a 1M window), with the state already saved by steps 1 to 3. Claude Code compacts about 32k tokens below `autoCompactWindow` (E0 on 2026-10-27: 92% of 400000, about 368k; the reserve is inferred from two data points), so `autoCompactWindow` and `backstopTokens` are 432000.
 
 The orchestrator follows the same rule. Its checkpoint adds the linked sessions and the questions that wait on the user.

@@ -30,10 +30,17 @@ const MIN_CHARS = 400
 const MIN_WINDOW = 400_000
 const RETRIES = 40
 const RETRY_MS = 500
+// A prompt the mod submits waits behind the host's own queued messages (a
+// side-session note), so its text is written as late as possible: this long after
+// the compaction ends, and only while no other turn has started.
+const RESUME_MS = 3_000
 // A repo path can hold spaces, so a path group is never \S+.
 const SENTINEL = /^CHECKPOINT-READY:\s*(.+?)\s*\|\s*(continue|wait)\s*$/
 
 const clean = (s: string | undefined) => (s ?? '').replace(/[^A-Za-z0-9._-]/g, '')
+
+/** A resume the mod owes after its own compaction: the turn end it follows, and the state file's mtime before the compaction. */
+type Pending = { w: Where; since: number; mtimeMs: number; token: number }
 
 const mem: {
   promptedFor?: number
@@ -42,7 +49,9 @@ const mem: {
   isCompacting: boolean
   personPromptAt: number
   logPath?: string
-} = { isBusy: false, isCompacting: false, personPromptAt: 0 }
+  resume?: Pending
+  resumeToken: number
+} = { isBusy: false, isCompacting: false, personPromptAt: 0, resumeToken: 0 }
 
 const readText = async ($: $, path: string) =>
   (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
@@ -176,7 +185,23 @@ const readCrossed = async ($: $, w: Where) => {
 const statusLine = ($: $, w: Where, shown: number, save: number) =>
   $.ui.status(`ctx ${shown}% · save ${save}%${w.binding ? ` · ${w.binding.role}` : ''}`)
 
-const resume = async ($: $, w: Where, since: number) => {
+/** Arms the resume check RESUME_MS from now. A later arm replaces an earlier one. */
+const armResume = ($: $) => {
+  const r = mem.resume
+  if (r === undefined) return
+  r.token = ++mem.resumeToken
+  const token = r.token
+  $.clock.after(RESUME_MS, () => void resume($, token))
+}
+
+// A turn that runs at the check moves it to that turn's end (turn.complete arms it
+// again). A prompt, a draft, a wait sentinel or a state file written after the
+// compaction means the session already went on, so it gets no resume prompt.
+const resume = async ($: $, token: number) => {
+  const r = mem.resume
+  if (r === undefined || r.token !== token || mem.isBusy) return
+  mem.resume = undefined
+  const { w, since } = r
   const text = await readText($, w.state)
   if (text === undefined) return
   const mark = sentinel(text)
@@ -186,9 +211,18 @@ const resume = async ($: $, w: Where, since: number) => {
   }
   if (mark.mode !== 'continue') return
   if (mem.personPromptAt >= since || (await hasDraft($))) return
+  if ((await $.fs.stat(w.state)).mtimeMs !== r.mtimeMs) {
+    await log($, `${w.state} changed after the compaction, so the session does not resume from it`)
+    return
+  }
   const step = nextAction(text) ?? 'see the Next action section'
   try {
-    await $.prompt.submit({ text: `Continue from ${w.state}: next action ${step}` })
+    await $.prompt.submit({
+      text: [
+        `Continue from ${w.state}: next action ${step}`,
+        'Read that file first. If its last line now ends in "| wait", or a later turn already did that action, do nothing and say so in one line.',
+      ].join('\n'),
+    })
   } catch (err) {
     await fail($, `the resume prompt was refused, so the session waits: ${String(err)}`)
   }
@@ -197,10 +231,11 @@ const resume = async ($: $, w: Where, since: number) => {
 // A headless host (the desktop app runs every session through the SDK)
 // refuses $.session.compact for good, but runs /compact between turns. /compact fires
 // the session.compact hook below, which adds the steer, so it gets no instructions here.
-const compactNow = async ($: $, w: Where): Promise<{ skip?: string }> => {
+// That /compact can run after this call returns, so the hook arms the resume.
+const compactNow = async ($: $, w: Where): Promise<{ skip?: string; isQueued?: true }> => {
   if ((await $.session.surfaces()).length === 0) {
     await $.command.run({ command: 'compact' })
-    return {}
+    return { isQueued: true }
   }
   return $.session.compact({ instructions: instructions(w) })
 }
@@ -217,9 +252,12 @@ const tryCompact = async ($: $, w: Where, since: number, tries: number, last = '
       return
     }
     mem.isCompacting = false
+    mem.resume = undefined
     await fail($, `compaction did not start after ${tries + 1} tries, so the backstop compacts later: ${why}`)
   }
   if (mem.isBusy) return retry('a turn is running', '')
+  const mtimeMs = (await $.fs.exists(w.state)) ? (await $.fs.stat(w.state)).mtimeMs : 0
+  mem.resume = { w, since, mtimeMs, token: 0 }
   let done
   try {
     done = await compactNow($, w)
@@ -228,13 +266,14 @@ const tryCompact = async ($: $, w: Where, since: number, tries: number, last = '
   }
   mem.isCompacting = false
   if (done.skip !== undefined) {
+    mem.resume = undefined
     await fail($, `compaction skipped: ${done.skip}`)
     return
   }
   await $.fs.write(crossedFile(w), '')
   mem.promptedFor = undefined
   mem.toastedFor = undefined
-  await resume($, w, since)
+  if (!done.isQueued) armResume($)
 }
 
 // A turn or a person's prompt in the delay before this runs wins. promptedFor is
@@ -317,7 +356,7 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin.kind !== 'plugin') mem.personPromptAt = await $.clock.now()
+    if (e.origin.kind !== 'plugin' && e.command?.name !== 'compact') mem.personPromptAt = await $.clock.now()
     return next(e)
   }).catch(async ($, e, next) => {
     await log($, `prompt.submit hook failed: ${next.error.message ?? next.error.kind}`)
@@ -328,6 +367,7 @@ export const register: Register = on => {
     const done = await next(e)
     if (e.agentId !== undefined) return done
     mem.isBusy = false
+    armResume($)
     if (e.isAborted) return done
     await tick($)
     return done
@@ -337,7 +377,14 @@ export const register: Register = on => {
     if (e.agentId !== undefined || (await readConfig($)) === undefined) return next(e)
     const steer = instructions(await where($))
     const merged = e.instructions ? `${e.instructions}\n\n${steer}` : steer
-    return next({ ...e, instructions: merged })
+    const done = await next({ ...e, instructions: merged })
+    // A throw here would make the .catch below run the compaction a second time.
+    try {
+      armResume($)
+    } catch (err) {
+      await log($, `the resume after the compaction was not armed: ${String(err)}`)
+    }
+    return done
   }).catch(async ($, e, next) => {
     await log($, `the compaction steer failed, so this compaction has no role card: ${next.error.message ?? next.error.kind}`)
     return next(e)

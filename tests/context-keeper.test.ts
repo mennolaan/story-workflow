@@ -121,6 +121,13 @@ const settle = async (clock: { advance: (ms: number) => Promise<void> }) => {
   for (let i = 0; i < 10; i++) await clock.advance(500)
 }
 
+const RESUME = [
+  `Continue from ${STATE}: next action run the matrix again`,
+  'Read that file first. If its last line now ends in "| wait", or a later turn already did that action, do nothing and say so in one line.',
+].join('\n')
+
+const MESSAGES = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
+
 test('below the save point: no compaction, no checkpoint, a status line', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
   const w = world(on, { percent: 20 })
@@ -166,7 +173,7 @@ test('a continue checkpoint resumes from the next action', async ($, on) => {
   const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt })
   await $.turn.complete(turnEnd())
   await settle(clock)
-  expect(w.prompts).toEqual([`Continue from ${STATE}: next action run the matrix again`])
+  expect(w.prompts).toEqual([RESUME])
 })
 
 test('a draft in the prompt box blocks the resume prompt', async ($, on) => {
@@ -244,7 +251,7 @@ test('a prompt the person sends after the turn ends blocks the resume prompt', a
 
 const LOG = `${PLANS}/.sessions/local_h1.log`
 
-test('a headless host compacts with /compact, never with $.session.compact', async ($, on) => {
+test('a headless host compacts with /compact, never with $.session.compact, and resumes when the compaction ends', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
   const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true })
   await $.turn.complete(turnEnd())
@@ -252,7 +259,11 @@ test('a headless host compacts with /compact, never with $.session.compact', asy
   expect(w.commands).toEqual(['compact'])
   expect(w.compacts.length).toBe(0)
   expect(w.files.get(CROSSED)?.text).toBe('')
-  expect(w.prompts.length).toBe(1)
+  expect(w.prompts.length).toBe(0)
+  // The engine runs the queued /compact later and raises session.compact.
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  await settle(clock)
+  expect(w.prompts).toEqual([RESUME])
 })
 
 test('a refusal that repeats is logged once, with its error text, and not retried 40 times', async ($, on) => {
@@ -364,4 +375,77 @@ test('without a usage breakdown the status falls back to the model window', asyn
   const w = world(on, { tokens: 360_000 })
   await $.session.start({ source: 'startup', cwd: CWD } as Parameters<typeof $.session.start>[0])
   expect(w.statuses).toEqual(['ctx 36% · save 35% · implement'])
+})
+
+const LATER = T0 + 60_000
+
+// Each test below drops the context after the compaction, as a real compaction does.
+
+test('a turn after the compaction that sets the checkpoint to wait gets no resume prompt', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  expect(w.compacts.length).toBe(1)
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  w.files.set(STATE, { text: checkpoint('wait'), mtimeMs: LATER })
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+})
+
+test('a checkpoint rewritten after the compaction, still continue, gets no resume prompt', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  w.files.set(STATE, { text: checkpoint('continue').replace('run the matrix again', 'push the branch'), mtimeMs: LATER })
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+  expect(w.files.get(LOG)?.text ?? '').toContain('changed after the compaction')
+})
+
+test('a host message after the compaction blocks the resume prompt', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  expect(w.compacts.length).toBe(1)
+  await $.prompt.submit({ text: 'a side session finished', origin: { kind: 'sdk' } } as Parameters<typeof $.prompt.submit>[0])
+  await settle(clock)
+  expect(w.prompts).toEqual(['a side session finished'])
+})
+
+test('a turn that runs at the resume check moves the check to its end', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([RESUME])
+})
+
+test('a /compact submission does not count as a prompt that blocks the resume', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true })
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  await $.prompt.submit({ text: '/compact', command: { name: 'compact', args: '' }, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  await settle(clock)
+  expect(w.prompts).toEqual(['/compact', RESUME])
 })
