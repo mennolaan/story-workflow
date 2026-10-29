@@ -6,7 +6,8 @@
 # Usage:
 #   story-bind.sh <role> <slug> [--parent <session id>]
 #   story-bind.sh --show    print the binding, or "unbound"
-#   story-bind.sh --state   print the checkpoint path of this session
+#   story-bind.sh --state   print the checkpoint path of this session and create
+#                           its folder, because /checkpoint writes the file with cat >
 #   story-bind.sh --unbind [<key>]   remove the binding of this session (or of
 #                           <key>, a child's session id) and its .crossed,
 #                           .nudged and .blocked marks. Safe to run again.
@@ -191,7 +192,10 @@ if [ "${1:-}" = "--unbind" ] && [ -n "${2:-}" ]; then
 fi
 
 if [ "${1:-}" = "--state" ]; then
-  story_state_file '{}'
+  state="$(story_state_file '{}')" || state=""
+  [ -n "${state}" ] || fail "cannot work out the checkpoint path of this session. Run story-bind.sh --show to see its binding."
+  mkdir -p "$(dirname "${state}")" || fail "cannot create the folder of the checkpoint $(dirname "${state}")."
+  printf '%s\n' "${state}"
   exit 0
 fi
 

@@ -18,7 +18,7 @@ Run step 1. When `story-bind.sh` exits 1, stop: show its message and write no fi
 "${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --show
 ```
 
-- `--state` prints the path. A bound session writes `<plans>/<slug>.d/<role>.md`. An unbound session writes `<plans>/.sessions/<key>.md`.
+- `--state` creates its folder and prints the path. A bound session writes `<plans>/<slug>.d/<role>.md`. An unbound session writes `<plans>/.sessions/<key>.md`.
 - `--show` prints the role, the story and the orchestrator id.
 - Write the whole file again each time. Do not append.
 

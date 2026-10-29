@@ -715,6 +715,17 @@ o="$(sbx CLAUDE_CODE_SESSION_ID=cli-1 -- --state)"
 [ "${o}" = "${plans}/story-z.d/implement.md" ] && pass "story-bind: --state prints the bound checkpoint path" || fail "story-bind: --state wrong" "${o}"
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-free -- --state)"
 [ "${o}" = "${plans}/.sessions/cli-free.md" ] && pass "story-bind: --state prints the unbound checkpoint path" || fail "story-bind: unbound --state wrong" "${o}"
+# --state creates the folder of the checkpoint, because /checkpoint writes it with cat >, which does not.
+fresh="${tmp}/fresh-plans"
+o="$(sbx STORY_PLANS_DIR="${fresh}" CLAUDE_CODE_SESSION_ID=fresh-1 -- --state 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [ "${o}" = "${fresh}/.sessions/fresh-1.md" ] && [ -d "${fresh}/.sessions" ] \
+  && pass "story-bind: --state on a fresh plans folder prints the path and creates .sessions/" || fail "story-bind: --state on a fresh plans folder (exit ${c})" "${o}"
+printf 'cat > "%s" <<EOF\nx\nEOF\n' "${o}" | bash && [ -f "${fresh}/.sessions/fresh-1.md" ] \
+  && pass "story-bind: the path from --state accepts a heredoc write" || fail "story-bind: the heredoc write to the --state path failed"
+: >"${tmp}/afile"
+o="$(sbx STORY_PLANS_DIR="${tmp}/afile/plans" CLAUDE_CODE_SESSION_ID=fresh-2 -- --state 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [[ "${o}" == *"cannot create the folder of the checkpoint"*"${tmp}/afile/plans/.sessions"* ]] \
+  && pass "story-bind: --state fails loud (exit 1) when its folder cannot be created" || fail "story-bind: --state with an impossible folder (exit ${c})" "${o}"
 bind cli-u orchestrator story-u
 for m in crossed nudged blocked; do printf '1\n' >"${plans}/.sessions/cli-u.${m}"; done
 o="$(sbx CLAUDE_CODE_SESSION_ID=cli-u -- --unbind 2>&1)"
