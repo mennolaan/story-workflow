@@ -33,7 +33,7 @@ type World = {
 
 const world = (
   on: On,
-  options: { percent: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean },
+  options: { percent?: number; tokens?: number; rawMax?: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean },
 ): World => {
   const w: World = { files: new Map(), compacts: [], commands: [], prompts: [], toasts: [], statuses: [], writes: [] }
   w.files.set(`${CWD}/.git`, { text: `gitdir: ${ROOT}/.git/worktrees/wt 1\n`, mtimeMs: T0 })
@@ -52,9 +52,12 @@ const world = (
   on('session.cwd', () => ({ value: CWD }))
   on('session.id', () => ({ value: 'sid-1' }))
   on('session.surfaces', () => ({ value: options.headless ? [] : ['terminal' as const] }))
-  on('session.usage', () => ({
-    value: { startedAt: 0, context: { tokens: (options.percent * (options.window ?? 1_000_000)) / 100, window: options.window ?? 1_000_000, percent: options.percent }, rateLimits: [] },
-  }))
+  on('session.usage', () => {
+    const window = options.window ?? 1_000_000
+    const tokens = options.tokens ?? ((options.percent ?? 0) * window) / 100
+    const breakdown = options.rawMax === undefined ? {} : { breakdown: { rawMaxTokens: options.rawMax } }
+    return { value: { startedAt: 0, context: { tokens, window, percent: Math.floor((tokens * 100) / window), ...breakdown }, rateLimits: [] } } as never
+  })
   on('prompt.read', () => ({ value: { text: options.draft ?? '', cursor: 0 } }))
   on('fs.exists', (_, e) => ({ value: w.files.has(e.path) }))
   on('fs.read', (_, e) => {
@@ -123,7 +126,7 @@ test('below the save point: no compaction, no checkpoint, a status line', async 
   await settle(clock)
   expect(w.compacts.length).toBe(0)
   expect(w.commands.length).toBe(0)
-  expect(w.statuses).toContain('ctx 20% · implement')
+  expect(w.statuses).toContain('ctx 20% · save 35% · implement')
 })
 
 test('at the save point with a fresh checkpoint: compacts once, steered to the state file', async ($, on) => {
@@ -330,4 +333,33 @@ test('no .claude/story.json: no status line, no file write, no compaction, no st
   expect(w.prompts).toEqual([])
   expect(w.toasts).toEqual([])
   expect(w.compacts).toEqual(['keep the plan'])
+})
+
+test('the status shows the percent of the composer: 252000 tokens of a 432000 backstop is 58%, save point 81%', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { tokens: 252_000, rawMax: 432_000 })
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.statuses).toContain('ctx 58% · save 81% · implement')
+  expect(w.commands).toEqual([])
+  expect(w.compacts.length).toBe(0)
+})
+
+test('360000 tokens: the status shows 83% and the rule still runs at the save point of the model window', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { tokens: 360_000, rawMax: 432_000, state: { text: 'short', mtimeMs: T0 } })
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.statuses).toContain('ctx 83% · save 81% · implement')
+  expect(w.commands).toEqual(['checkpoint'])
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.toasts).toContain(`context-keeper: context 83% (save point 81%) and no fresh checkpoint at ${STATE}, so the backstop compacts later`)
+})
+
+test('without a usage breakdown the status falls back to the model window', async ($, on) => {
+  mock.clock(on, { now: T0 })
+  const w = world(on, { tokens: 360_000 })
+  await $.session.start({ source: 'startup', cwd: CWD } as Parameters<typeof $.session.start>[0])
+  expect(w.statuses).toEqual(['ctx 36% · save 35% · implement'])
 })

@@ -2,7 +2,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 // The compact half of the context rule (skills/story/SKILL.md of this plugin,
 // "Context rule"). context-guard.sh nudges and gates the save; this module
-// compacts once the checkpoint is fresh and resumes from it. Both read
+// compacts once the checkpoint is fresh and resumes from it. The rule runs on
+// the percent of the model window (context.percent against checkpointPercent).
+// The status line and the toast show what the desktop composer shows: the
+// percent of autoCompactWindow, plus the save point on that scale. Both read
 // .claude/story.json and <plans>/.sessions/<key>.crossed, from the main
 // checkout root, because a desktop worktree session runs its hooks there.
 // Without .claude/story.json the repo has not opted in: no status line, no
@@ -133,6 +136,14 @@ const percentOf = async ($: $) => {
   return context.tokens === undefined ? 0 : Math.floor((context.tokens * 100) / context.window)
 }
 
+/** What the desktop composer and /context show: the percent of rawMaxTokens (autoCompactWindow), not of the model window. The rule itself stays on context.percent. */
+const shownOf = async ($: $, limit: number) => {
+  const { context } = await $.session.usage({ breakdown: 'summary' })
+  const raw = context.breakdown?.rawMaxTokens ?? context.window
+  const tokens = context.tokens ?? ((context.percent ?? 0) * context.window) / 100
+  return { shown: Math.floor((tokens * 100) / raw), save: Math.floor((context.window * limit) / raw) }
+}
+
 const isFresh = async ($: $, path: string, crossed: number) => {
   if (!(await $.fs.exists(path))) return false
   const stat = await $.fs.stat(path)
@@ -162,8 +173,8 @@ const readCrossed = async ($: $, w: Where) => {
   return Number.isFinite(n) ? n : undefined
 }
 
-const statusLine = ($: $, w: Where, percent: number) =>
-  $.ui.status(`ctx ${percent}%${w.binding ? ` · ${w.binding.role}` : ''}`)
+const statusLine = ($: $, w: Where, shown: number, save: number) =>
+  $.ui.status(`ctx ${shown}% · save ${save}%${w.binding ? ` · ${w.binding.role}` : ''}`)
 
 const resume = async ($: $, w: Where, since: number) => {
   const text = await readText($, w.state)
@@ -253,7 +264,8 @@ const tick = async ($: $) => {
   const w = await where($)
   const limit = config.checkpointPercent ?? DEFAULT_PERCENT
   const percent = await percentOf($)
-  statusLine($, w, percent)
+  const { shown, save } = await shownOf($, limit)
+  statusLine($, w, shown, save)
   if ((await $.session.usage()).context.window < MIN_WINDOW) return
 
   if (percent < limit) {
@@ -285,15 +297,17 @@ const tick = async ($: $) => {
 
   if (mem.toastedFor !== crossed) {
     mem.toastedFor = crossed
-    await fail($, `context ${percent}% and no fresh checkpoint at ${w.state}, so the backstop compacts later`)
+    await fail($, `context ${shown}% (save point ${save}%) and no fresh checkpoint at ${w.state}, so the backstop compacts later`)
   }
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    if ((await readConfig($)) === undefined) return started
-    statusLine($, await where($), await percentOf($))
+    const config = await readConfig($)
+    if (config === undefined) return started
+    const { shown, save } = await shownOf($, config.checkpointPercent ?? DEFAULT_PERCENT)
+    statusLine($, await where($), shown, save)
     return started
   })
 
