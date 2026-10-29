@@ -52,10 +52,12 @@ const world = (
   on('session.cwd', () => ({ value: CWD }))
   on('session.id', () => ({ value: 'sid-1' }))
   on('session.surfaces', () => ({ value: options.headless ? [] : ['terminal' as const] }))
-  on('session.usage', () => {
+  on('session.usage', (_, e) => {
     const window = options.window ?? 1_000_000
     const tokens = options.tokens ?? ((options.percent ?? 0) * window) / 100
-    const breakdown = options.rawMax === undefined ? {} : { breakdown: { rawMaxTokens: options.rawMax } }
+    // Like the engine: the breakdown is absent unless the call asks for it.
+    const asked = (e as { breakdown?: string } | undefined)?.breakdown !== undefined
+    const breakdown = options.rawMax === undefined || !asked ? {} : { breakdown: { rawMaxTokens: options.rawMax } }
     return { value: { startedAt: 0, context: { tokens, window, percent: Math.floor((tokens * 100) / window), ...breakdown }, rateLimits: [] } } as never
   })
   on('prompt.read', () => ({ value: { text: options.draft ?? '', cursor: 0 } }))
