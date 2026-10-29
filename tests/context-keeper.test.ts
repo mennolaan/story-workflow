@@ -449,3 +449,48 @@ test('a /compact submission does not count as a prompt that blocks the resume', 
   await settle(clock)
   expect(w.prompts).toEqual(['/compact', RESUME])
 })
+
+test('an aborted turn after the compaction cancels the pending resume', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.turn.complete({ ...turnEnd({ isAborted: true }), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+  expect(w.files.get(LOG)?.text ?? '').toContain('aborted after the compaction')
+})
+
+test('the resume waits 3 seconds after the compaction, so a host message 1 second later blocks it', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  await clock.advance(1_000)
+  expect(w.prompts).toEqual([])
+  await $.prompt.submit({ text: 'a side session finished', origin: { kind: 'sdk' } } as Parameters<typeof $.prompt.submit>[0])
+  await settle(clock)
+  expect(w.prompts).toEqual(['a side session finished'])
+})
+
+test('a turn that ends inside the delay starts the 3 seconds again', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  await clock.advance(500)
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await clock.advance(1_000)
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await clock.advance(2_000)
+  expect(w.prompts).toEqual([])
+  await clock.advance(1_500)
+  expect(w.prompts).toEqual([RESUME])
+})

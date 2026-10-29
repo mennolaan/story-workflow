@@ -367,8 +367,14 @@ export const register: Register = on => {
     const done = await next(e)
     if (e.agentId !== undefined) return done
     mem.isBusy = false
+    if (e.isAborted) {
+      if (mem.resume !== undefined) {
+        mem.resume = undefined
+        await log($, 'a turn was aborted after the compaction, so the session does not resume')
+      }
+      return done
+    }
     armResume($)
-    if (e.isAborted) return done
     await tick($)
     return done
   })
