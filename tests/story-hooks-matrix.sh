@@ -1064,6 +1064,8 @@ br_writes=(
   "gh issue comment 3 --body x" "gh issue edit 3 --add-label x"
   "gh api -X PATCH repos/o/r/issues/3 -f state=closed"
   "gh api graphql -f query='mutation { closeIssue(input:{issueId:\"x\"}) { clientMutationId } }'"
+  $'gh api graphql -f query=\'# close it\nmutation { closeIssue(input:{issueId:"x"}) { issue { number } } }\''
+  "gh api graphql -f query='query A { repository(owner:\"o\", name:\"r\") { issue(number: 1) { title } } } mutation B { closeIssue(input:{issueId:\"x\"}) { clientMutationId } }' -f operationName=B"
   "az rest --method patch --url https://dev.azure.com/o/_apis/wit/workitems/5"
   "az devops invoke --area wit --resource workitems --http-method PATCH --in-file p.json"
   "git push origin HEAD" "gh pr merge 5 --squash" "az pipelines run --name x" "rm ${plans}/.sessions/g-implement.json"
@@ -1146,6 +1148,13 @@ br_expect "${others}" "${readers}" Bash "jira issue view PROJ-1" STORY_CONFIG="$
 br_expect "${others}" "${readers}" Bash "bd show 5" STORY_CONFIG="${tmp}/brg-show.json"
 br_expect "" "C1" Bash "jira project list" STORY_CONFIG="${tmp}/brg-show.json"
 br_expect "" "C1" Bash "bd list" STORY_CONFIG="${tmp}/brg-show.json"
+printf '{"board": {"show": "gh api repos/o/r/issues/{id}"}}\n' >"${tmp}/brg-showapi.json"
+printf '{"board": {"reads": ["^gh api\\\\b"]}}\n' >"${tmp}/brg-readsapi.json"
+for f in brg-showapi brg-readsapi; do
+  br_expect "${others}" "${readers}" Bash "gh api repos/o/r/pulls/5" STORY_CONFIG="${tmp}/${f}.json"
+  br_expect "${readers}" "C1 C5" Bash "gh api repos/o/r/pulls/5/reviews -f event=APPROVE" STORY_CONFIG="${tmp}/${f}.json"
+  br_expect "${readers}" "C1 C5" Bash "gh api -X PATCH repos/o/r/issues/3 -f state=closed" STORY_CONFIG="${tmp}/${f}.json"
+done
 printf '{"board": {"reads": "x"}}\n' >"${tmp}/brg-str.json"
 printf '{"board": {"x": 1},}\n' >"${tmp}/brg-broken.json"
 printf '{"board": "x"}\n' >"${tmp}/brg-obj.json"
@@ -1161,13 +1170,17 @@ for f in brg-str brg-broken brg-obj; do
 done
 # static: the reader definition, and the route of hooks.json
 agent_bad() { # agent_bad <agent file>: prints what the reader definition lacks
-  local fm dis t
+  local fm dis t tl
   fm="$(awk 'NR == 1 && /^---$/ { f = 1; next } f && /^---$/ { exit } f' "$1")"
   grep -qx 'name: story-reader' <<<"${fm}" || echo "name is not story-reader"
   grep -qx 'model: haiku' <<<"${fm}" || echo "model is not haiku"
   grep -qx 'effort: low' <<<"${fm}" || echo "effort is not low"
   dis="$(sed -n 's/^disallowedTools://p' <<<"${fm}" | tr -d ' ')"
   for t in Edit Write NotebookEdit Agent; do case ",${dis}," in *",${t},"*) ;; *) echo "disallowedTools lacks ${t}" ;; esac; done
+  if grep -q '^tools:' <<<"${fm}"; then
+    tl="$(sed -n 's/^tools://p' <<<"${fm}" | tr -d ' ')"
+    for t in Edit Write NotebookEdit Agent '*'; do case ",${tl}," in *",${t},"*|*",${t}("*) echo "tools lists ${t}, and a tools line cancels disallowedTools" ;; esac; done
+  fi
   grep -Eiq '[0-9][0-9,]* *(characters|chars|words|lines|tokens)|(cut|truncate|trim|shorten)[a-z]* [a-z ]{0,20}(at|to|after) [0-9]' "$1" && echo "the body cuts text"
   return 0
 }
@@ -1175,12 +1188,14 @@ o="$(agent_bad "${repo}/agents/story-reader.md")"
 [ -z "${o}" ] && pass "reader: agents/story-reader.md is story-reader on haiku at low effort, cannot edit or spawn, and cuts no text" || fail "reader: the agent definition is wrong" "${o}"
 sed 's/^model: haiku$/model: sonnet/' "${repo}/agents/story-reader.md" >"${tmp}/reader-sonnet.md"
 [ -n "$(agent_bad "${tmp}/reader-sonnet.md")" ] && pass "reader: a definition with model sonnet fails" || fail "reader: model sonnet passed"
+awk '{ print } /^effort: low$/ { print "tools: Bash, Edit" }' "${repo}/agents/story-reader.md" >"${tmp}/reader-tools.md"
+grep -qx 'tools: Bash, Edit' "${tmp}/reader-tools.md" && [ -n "$(agent_bad "${tmp}/reader-tools.md")" ] && pass "reader: a definition with tools: Bash, Edit fails" || fail "reader: a tools line with Edit passed"
 { cat "${repo}/agents/story-reader.md"; printf 'Cut each at 3000 characters.\n'; } >"${tmp}/reader-cut.md"
 [ -n "$(agent_bad "${tmp}/reader-cut.md")" ] && pass "reader: a definition that cuts text fails" || fail "reader: a cut rule passed"
 route_bad() { # route_bad <hooks.json>: prints each tool that does not reach board-read-guard.sh
   local m t
   m="$(jq -r '[.hooks.PreToolUse[]? | select(any(.hooks[]?; (.command // "") | test("/hooks/board-read-guard\\.sh"))) | .matcher] | join("|")' "$1")"
-  for t in Agent Task Bash Monitor mcp__terminal__run_in_terminal mcp__github__get_issue; do
+  for t in Agent Task Bash Monitor mcp__terminal__run_in_terminal mcp__github__get_issue mcp__github__create_issue mcp__zz_any__any_tool; do
     [ -n "${m}" ] && [[ "${t}" =~ ^(${m})$ ]] || echo "${t}"
   done
 }
@@ -1188,6 +1203,8 @@ o="$(route_bad "${hooks}/hooks.json")"
 [ -z "${o}" ] && pass "route: hooks.json sends Agent, Task, Bash, Monitor and every MCP tool to board-read-guard.sh" || fail "route: these tools miss board-read-guard.sh" "${o}"
 jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; (.command // "") | test("board-read-guard"))) | .matcher) = "Bash"' "${hooks}/hooks.json" >"${tmp}/route-bash.json"
 [ -n "$(route_bad "${tmp}/route-bash.json")" ] && pass "route: a hooks.json that sends only Bash fails" || fail "route: a Bash-only route passed"
+jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; (.command // "") | test("board-read-guard"))) | .matcher) = "Agent|Task|Bash|Monitor|mcp__terminal__run_in_terminal|mcp__github__get_issue"' "${hooks}/hooks.json" >"${tmp}/route-two.json"
+[ -n "$(route_bad "${tmp}/route-two.json")" ] && pass "route: a hooks.json that sends only two named MCP tools fails" || fail "route: a route with two named MCP tools passed"
 
 # static: /story and every brief read the board through the story-reader agent
 reader_lines_missing() { # reader_lines_missing <file>...: prints each line that names a board read without the story-reader agent

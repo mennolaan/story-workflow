@@ -36,8 +36,10 @@
 #                      a prefix in STORY_BOARD_SHOW, a regex in STORY_BOARD_READS)
 #   write<TAB><label>  a board or issue write, or anything the default mode denies
 #   badread<TAB><entry><TAB><why>  a STORY_BOARD_READS entry that is not a regex
-# A read rule wins over the default rules for the same command, so a WIQL POST
-# is a read, not a write. parse and bad lines are the same as in the default mode.
+# A built-in read rule wins over the default rules for the same command, so a
+# WIQL POST is a read, not a write. A read from STORY_BOARD_SHOW or
+# STORY_BOARD_READS does not: a command the default rules deny is a write.
+# parse and bad lines are the same as in the default mode.
 use strict;
 use warnings;
 
@@ -535,7 +537,7 @@ sub gh_api_board {
   if ($ep eq 'graphql') {
     my ($query) = map { /^query=(.*)$/s ? $1 : () } @fields;
     return unless defined $query;
-    return ('write', 'run gh api graphql with a mutation') if $query =~ /^\s*mutation\b/;
+    return ('write', 'run gh api graphql with a mutation') if $query =~ /\bmutation\b/;
     return ('read', 'run gh api graphql on issues') if $query =~ /\bissues?\s*[({]/;
     return;
   }
@@ -546,12 +548,24 @@ sub gh_api_board {
   return ('read', "run gh api $path");
 }
 
-# board_class: (read|write, label) for a story, task or issue command, or nothing.
+# board_class: (read|write, label, source) for a story, task or issue command, or
+# nothing. The built-in classes come first. A board.show prefix or a board.reads
+# regex (source "config") only adds reads for commands they do not classify, so a
+# broad prefix such as "gh api" cannot make a write a read.
 sub board_class {
   my @a = @_;
+  my ($kind, $label) = builtin_class(@a);
+  return ($kind, $label, 'builtin') if defined $kind;
   my $text = join ' ', @a;
-  for my $p (@SHOW) { return ('read', "run $p") if $text eq $p || index($text, "$p ") == 0; }
-  for my $d (@READS) { return ('read', "run a command that matches the board.reads entry $d->[0]") if $text =~ $d->[1]; }
+  for my $p (@SHOW) { return ('read', "run $p", 'config') if $text eq $p || index($text, "$p ") == 0; }
+  for my $d (@READS) { return ('read', "run a command that matches the board.reads entry $d->[0]", 'config') if $text =~ $d->[1]; }
+  return;
+}
+
+# builtin_class: (read|write, label) for an az boards, az devops, az rest or gh
+# command on work items or issues, or nothing.
+sub builtin_class {
+  my @a = @_;
   my $cmd = $a[0];
   if ($cmd eq 'az') {
     my @p;
@@ -616,8 +630,12 @@ sub board_class {
 sub verdict {
   my @argv = @_;
   if ($BOARD) {
-    my ($kind, $label) = board_class(@argv);
-    if (defined $kind) { push @HITS, "$kind\t$label"; return; }
+    my ($kind, $label, $source) = board_class(@argv);
+    if (defined $kind) {
+      my $r = $source eq 'config' ? rules(@argv) : undef;
+      push @HITS, defined $r ? "write\t$r" : "$kind\t$label";
+      return;
+    }
   }
   my $r = rules(@argv);
   return defined $r ? denied($r) : undef;
