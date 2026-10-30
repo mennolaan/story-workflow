@@ -1182,19 +1182,26 @@ agent_bad() { # agent_bad <agent file>: prints what the reader definition lacks
     for t in Edit Write NotebookEdit Agent '*'; do case ",${tl}," in *",${t},"*|*",${t}("*) echo "tools lists ${t}, and a tools line cancels disallowedTools" ;; esac; done
   fi
   grep -Eiq '[0-9][0-9,]* *(characters|chars|words|lines|tokens)|(cut|truncate|trim|shorten)[a-z]* [a-z ]{0,20}(at|to|after) [0-9]' "$1" && echo "the body cuts text"
+  grep -qF 'Do not summarise or cut the description, the acceptance criteria or an issue body.' "$1" || echo "the body does not forbid a summary of the description and the acceptance criteria"
+  grep -qF 'Copy the text word for word and in full.' "$1" || echo "the body does not copy the description and the acceptance criteria in full"
+  grep -Ei 'summari[sz]|abridge|condense|paraphras' "$1" | grep -vF 'Do not summarise or cut' >/dev/null && echo "the body asks for a summary"
   return 0
 }
 o="$(agent_bad "${repo}/agents/story-reader.md")"
-[ -z "${o}" ] && pass "reader: agents/story-reader.md is story-reader on haiku at low effort, cannot edit or spawn, and cuts no text" || fail "reader: the agent definition is wrong" "${o}"
+[ -z "${o}" ] && pass "reader: agents/story-reader.md is story-reader on haiku at low effort, cannot edit or spawn, cuts no text, and copies the description and the acceptance criteria in full" || fail "reader: the agent definition is wrong" "${o}"
 sed 's/^model: haiku$/model: sonnet/' "${repo}/agents/story-reader.md" >"${tmp}/reader-sonnet.md"
 [ -n "$(agent_bad "${tmp}/reader-sonnet.md")" ] && pass "reader: a definition with model sonnet fails" || fail "reader: model sonnet passed"
 awk '{ print } /^effort: low$/ { print "tools: Bash, Edit" }' "${repo}/agents/story-reader.md" >"${tmp}/reader-tools.md"
 grep -qx 'tools: Bash, Edit' "${tmp}/reader-tools.md" && [ -n "$(agent_bad "${tmp}/reader-tools.md")" ] && pass "reader: a definition with tools: Bash, Edit fails" || fail "reader: a tools line with Edit passed"
 { cat "${repo}/agents/story-reader.md"; printf 'Cut each at 3000 characters.\n'; } >"${tmp}/reader-cut.md"
 [ -n "$(agent_bad "${tmp}/reader-cut.md")" ] && pass "reader: a definition that cuts text fails" || fail "reader: a cut rule passed"
+{ awk '/^---$/ { n++ } { print } n == 2 { exit }' "${repo}/agents/story-reader.md"; printf 'Summarise each description and acceptance criterion in a short digest.\n'; } >"${tmp}/reader-sum.md"
+[ -n "$(agent_bad "${tmp}/reader-sum.md")" ] && pass "reader: a definition that summarises the acceptance criteria fails" || fail "reader: a summary rule passed"
+{ cat "${repo}/agents/story-reader.md"; printf 'Condense long comments.\n'; } >"${tmp}/reader-condense.md"
+[ -n "$(agent_bad "${tmp}/reader-condense.md")" ] && pass "reader: a definition that adds a condense rule fails" || fail "reader: a condense rule passed"
 route_bad() { # route_bad <hooks.json>: prints each tool that does not reach board-read-guard.sh
   local m t
-  m="$(jq -r '[.hooks.PreToolUse[]? | select(any(.hooks[]?; (.command // "") | test("/hooks/board-read-guard\\.sh"))) | .matcher] | join("|")' "$1")"
+  m="$(jq -r '[.hooks.PreToolUse[]? | select(any(.hooks[]?; (.command // "") == "\"${CLAUDE_PLUGIN_ROOT}/hooks/board-read-guard.sh\"")) | .matcher] | join("|")' "$1")"
   for t in Agent Task Bash Monitor mcp__terminal__run_in_terminal mcp__github__get_issue mcp__github__create_issue mcp__zz_any__any_tool; do
     [ -n "${m}" ] && [[ "${t}" =~ ^(${m})$ ]] || echo "${t}"
   done
@@ -1203,6 +1210,8 @@ o="$(route_bad "${hooks}/hooks.json")"
 [ -z "${o}" ] && pass "route: hooks.json sends Agent, Task, Bash, Monitor and every MCP tool to board-read-guard.sh" || fail "route: these tools miss board-read-guard.sh" "${o}"
 jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; (.command // "") | test("board-read-guard"))) | .matcher) = "Bash"' "${hooks}/hooks.json" >"${tmp}/route-bash.json"
 [ -n "$(route_bad "${tmp}/route-bash.json")" ] && pass "route: a hooks.json that sends only Bash fails" || fail "route: a Bash-only route passed"
+jq '(.hooks.PreToolUse[].hooks[] | select((.command // "") | test("board-read-guard")) | .command) |= ": " + .' "${hooks}/hooks.json" >"${tmp}/route-noop.json"
+grep -q '": \\"' "${tmp}/route-noop.json" && [ -n "$(route_bad "${tmp}/route-noop.json")" ] && pass "route: a hooks.json whose guard command is a no-op fails" || fail "route: a no-op guard command passed"
 jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; (.command // "") | test("board-read-guard"))) | .matcher) = "Agent|Task|Bash|Monitor|mcp__terminal__run_in_terminal|mcp__github__get_issue"' "${hooks}/hooks.json" >"${tmp}/route-two.json"
 [ -n "$(route_bad "${tmp}/route-two.json")" ] && pass "route: a hooks.json that sends only two named MCP tools fails" || fail "route: a route with two named MCP tools passed"
 
