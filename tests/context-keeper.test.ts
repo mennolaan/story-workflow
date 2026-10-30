@@ -528,3 +528,20 @@ test('on a headless host, a turn that starts after /compact ends cancels the res
   expect(w.prompts).toEqual([])
   expect(w.files.get(LOG)?.text ?? '').toContain('a turn started after the compaction')
 })
+
+test('a turn that ends after /compact is queued and before it runs does not send the resume early', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  expect(w.commands).toEqual(['compact'])
+  options.percent = 10
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  await settle(clock)
+  expect(w.prompts).toEqual([RESUME])
+})

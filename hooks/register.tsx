@@ -185,10 +185,10 @@ const readCrossed = async ($: $, w: Where) => {
 const statusLine = ($: $, w: Where, shown: number, save: number) =>
   $.ui.status(`ctx ${shown}% · save ${save}%${w.binding ? ` · ${w.binding.role}` : ''}`)
 
-/** Arms the resume check RESUME_MS from now. A later arm replaces an earlier one. */
+/** Arms the resume check RESUME_MS from now. A later arm replaces an earlier one. Does nothing before the compaction has run. */
 const armResume = ($: $) => {
   const r = mem.resume
-  if (r === undefined) return
+  if (r === undefined || r.isCompacted !== true) return
   r.token = ++mem.resumeToken
   const token = r.token
   $.clock.after(RESUME_MS, () => void resume($, token))
