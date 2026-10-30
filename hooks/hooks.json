@@ -18,6 +18,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task|Bash|Monitor|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/board-read-guard.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

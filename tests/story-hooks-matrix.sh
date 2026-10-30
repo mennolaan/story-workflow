@@ -73,6 +73,7 @@ bare_all() { # bare_all <project dir>: runs every automatic hook, prints what ea
   bare_hook "$1" post-compact.sh '{"hook_event_name":"PostCompact","session_id":"nc-impl","trigger":"auto","compact_summary":"S"}'; printf '%s' "${out}"
   bare_hook "$1" role-guard.sh "$(jq -cn '{hook_event_name:"PreToolUse",session_id:"nc-impl",tool_name:"Bash",tool_input:{command:"git push"}}')"; printf '%s' "${out}"
   bare_hook "$1" role-guard.sh "$(jq -cn '{hook_event_name:"PreToolUse",session_id:"nc-impl",tool_name:"mcp__ccd_session_mgmt__clear_session",tool_input:{session_id:"x"}}')"; printf '%s' "${out}"
+  bare_hook "$1" board-read-guard.sh "$(jq -cn '{hook_event_name:"PreToolUse",session_id:"nc-impl",tool_name:"Bash",tool_input:{command:"gh issue view 3"}}')"; printf '%s' "${out}"
   bare_hook "$1" lint-mark.sh '{"hook_event_name":"PreToolUse","session_id":"nc-impl","tool_name":"Bash","tool_input":{"command":"true"}}'; printf '%s' "${out}"
   bare_hook "$1" plan-boundary.sh '{"hook_event_name":"PostToolUse","session_id":"nc-impl","tool_name":"Bash","tool_input":{"command":"true"}}'; printf '%s' "${out}"
 }
@@ -624,7 +625,7 @@ for f in "${story}"/briefs/*.md; do
 done
 repo_facts() { grep -n -i -E 'tme-lean|dev\.azure\.com|origin/development|az repos pr create|eiffel|/review-panel|/review-grok|feature/<id>' "$@"; }
 o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/story.example.json" "${repo}/skills/checkpoint/SKILL.md" \
-  "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin"/*.json)"
+  "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin"/*.json "${repo}"/agents/*.md)"
 [ -z "${o}" ] && pass "repo facts: no skill, brief, example config, hook, mod or mod test names the facts of one repo" || fail "repo facts: found" "${o}"
 jq -e '(.review | not) and (.board.show | type == "string") and (.pr.create | type == "string") and (.baseBranch | type == "string") and (.branch | type == "string") and (.backstopTokens | type == "number") and (.guard.deny | type == "array")' \
   "${story}/story.example.json" >/dev/null && pass "example: story.example.json is valid, sets every key a repo needs and has no review block" \
@@ -998,13 +999,203 @@ rm -rf "${tmp}/pb-tmp" && mkdir -p "${tmp}/pb-tmp"
 printf '%s' "${lm_in}" | env STORY_CONFIG="${tmp}/pb-cfg.json" TMPDIR="${tmp}/pb-tmp" "${hooks}/lint-mark.sh"
 [ -f "${tmp}/pb-tmp/claude-lint-mark-pb-off" ] && pass "lint-mark: planBoundary true writes the stamp" || fail "lint-mark: planBoundary true wrote no stamp"
 
+# 4m. board-read-guard: story and issue reads run only in the story-reader agent, on haiku
+brg() { # brg <json> [KEY=VALUE ...]: runs board-read-guard.sh with no subagent model in the env; sets out and code
+  local json="$1"
+  shift
+  out="$(printf '%s' "${json}" | env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_SUBAGENT_MODEL -u CLAUDE_CODE_SUBAGENT_MODEL_FORCE \
+    STORY_PLANS_DIR="${plans}" STORY_CONFIG="${tmp}/config.json" CLAUDE_PROJECT_DIR="${repo}" "$@" "${hooks}/board-read-guard.sh" 2>"${tmp}/stderr")"
+  code=$?
+}
+br_in() { # br_in <caller> <tool> <command>: the hook input of caller C1 to C9
+  # C1 unbound main thread, C2 orchestrator, C3 bound implement child, C4 --agent story-reader main thread (no agent_id),
+  # C5 Explore, C6 general-purpose, C7 fork, C8 and C9 the reader (agent_id and its agent_type).
+  local s=g-unbound aid="" at=""
+  case "$1" in
+    C2) s=g-orchestrator ;; C3) s=g-implement ;; C4) at="story-reader" ;;
+    C5) aid=a5 at=Explore ;; C6) aid=a6 at="general-purpose" ;; C7) aid=a7 at=fork ;;
+    C8) aid=a8 at="story-reader" ;; C9) aid=a9 at="story-workflow:story-reader" ;;
+  esac
+  jq -cn --arg s "${s}" --arg t "$2" --arg c "$3" --arg aid "${aid}" --arg at "${at}" \
+    '{hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{command:$c}}
+     + (if $aid == "" then {} else {agent_id:$aid} end) + (if $at == "" then {} else {agent_type:$at} end)'
+}
+brg_deny() { [ "${code}" -eq 0 ] && [[ "${out}" == *'"permissionDecision":"deny"'*'board-read-guard: '* ]]; }
+brg_pass() { [ "${code}" -eq 0 ] && [ -z "${out}" ]; }
+br_expect() { # br_expect <deny callers> <pass callers> <tool> <command> [KEY=VALUE ...]: one row, each caller checked
+  local d="$1" p="$2" t="$3" c="$4" who bad=""
+  shift 4
+  for who in ${d}; do brg "$(br_in "${who}" "${t}" "${c}")" "$@"; brg_deny || bad="${bad} ${who} passed (code ${code}, ${out});"; done
+  for who in ${p}; do brg "$(br_in "${who}" "${t}" "${c}")" "$@"; brg_pass || bad="${bad} ${who} denied (code ${code}, ${out});"; done
+  [ -z "${bad}" ] && pass "board-read: ${t} ${c} (deny: ${d:-none}; pass: ${p:-none})" || fail "board-read: ${t} ${c}" "${bad}"
+}
+others="C1 C2 C3 C4 C5 C6 C7"
+readers="C8 C9"
+br_reads=(
+  "az boards work-item show --org https://dev.azure.com/o --id 616"
+  "az boards work-item show --id 5 -o json | jq .fields"
+  "az boards work-item relation show --id 5"
+  "az boards query --wiql \"SELECT [System.Id] FROM workitems\""
+  "az devops invoke --area wit --resource workitems --route-parameters id=5"
+  "az devops invoke --area WIT --resource wiql --http-method POST --in-file q.json"
+  "az rest --url \"https://dev.azure.com/o/_apis/wit/workitems/5?api-version=7.1\""
+  "az rest --method post --uri https://dev.azure.com/o/p/_apis/wit/wiql --body @q.json"
+  "gh issue view 12" "gh issue list --state open" "gh issue status"
+  "gh -R owner/repo issue view 12 --comments" "gh issue -R owner/repo view 12"
+  "gh search issues \"label:story\"" "gh project item-list 1 --owner o"
+  "gh api repos/o/r/issues/12" "gh api \"/repos/{owner}/{repo}/issues?state=open\" --paginate" "gh api -X GET search/issues -f q=repo:o/r"
+  "gh api graphql -f query='query { repository(owner:\"o\", name:\"r\") { issue(number: 1) { title } } }'"
+  "bash -c 'az boards work-item show --id 5'" "echo \"\$(gh issue view 3)\"" "cd x && /opt/homebrew/bin/az boards work-item show --id 5" "env A=1 gh issue view 3"
+)
+for c in "${br_reads[@]}"; do br_expect "${others}" "${readers}" Bash "${c}"; done
+br_expect "${others}" "${readers}" mcp__terminal__run_in_terminal "gh issue view 3"
+br_expect "${others}" "${readers}" Monitor "gh issue list"
+br_neutral=(
+  "git commit -m \"docs: az boards work-item show stays in the reader\"" "echo 'gh issue view 3'" "grep -n \"az boards\" SKILL.md"
+  $'cat > notes.md <<\'EOF\'\ngh issue view 3\nEOF'
+  "az boards work-item relation list-type" "az boards iteration project list"
+  "az repos pr show --id 5" "gh pr view 5" "gh api repos/o/r/pulls/5"
+  "az rest --method get --url https://graph.microsoft.com/v1.0/me" "git status"
+)
+for c in "${br_neutral[@]}"; do br_expect "" "${others} ${readers}" Bash "${c}"; done
+br_writes=(
+  "az boards work-item update --id 5 --state Done" "az boards work-item create --type Task --title x"
+  "az boards work-item relation add --id 5 --relation-type parent --target-id 6"
+  "gh issue comment 3 --body x" "gh issue edit 3 --add-label x"
+  "gh api -X PATCH repos/o/r/issues/3 -f state=closed"
+  "gh api graphql -f query='mutation { closeIssue(input:{issueId:\"x\"}) { clientMutationId } }'"
+  "az rest --method patch --url https://dev.azure.com/o/_apis/wit/workitems/5"
+  "az devops invoke --area wit --resource workitems --http-method PATCH --in-file p.json"
+  "git push origin HEAD" "gh pr merge 5 --squash" "az pipelines run --name x" "rm ${plans}/.sessions/g-implement.json"
+)
+for c in "${br_writes[@]}"; do br_expect "${readers}" "${others}" Bash "${c}"; done
+br_expect "${others} ${readers}" "" Bash "az boards work-item show --id 1 && az boards work-item update --id 1 --state Done"
+brg "$(br_in C1 Bash "az boards work-item show --id 1 && az boards work-item update --id 1 --state Done")"; o1="${out}"
+brg "$(br_in C8 Bash "az boards work-item show --id 1 && az boards work-item update --id 1 --state Done")"
+[[ "${o1}" == *'reads the board on the session model'* && "${out}" == *'only reads'*'work-item update'* ]] \
+  && pass "board-read: a show then an update is a read for the main thread and a write for the reader" || fail "board-read: the mixed command lost a hit" "C1: ${o1}; C8: ${out}"
+printf '{"guard": {"deny": ["^terraform\\\\s+apply\\\\b"]}}\n' >"${tmp}/brg-deny.json"
+br_expect "${readers}" "C1 C5" Bash "terraform apply" STORY_CONFIG="${tmp}/brg-deny.json"
+# MCP tools: a reader calls only the read tools of board.readTools; the terminal tool is a command
+br_expect "${readers}" "C1 C2 C3 C5" mcp__github__create_issue ""
+br_expect "${readers}" "C1 C2 C3 C5" mcp__ccd_turn__wrap_up ""
+printf '{"board": {"readTools": ["mcp__github__get_issue"]}}\n' >"${tmp}/brg-tools.json"
+br_expect "${readers}" "C1 C5" mcp__github__create_issue "" STORY_CONFIG="${tmp}/brg-tools.json"
+br_expect "${others}" "${readers}" mcp__github__get_issue "" STORY_CONFIG="${tmp}/brg-tools.json"
+br_expect "C8" "C1" mcp__github__get_issue_comments "" STORY_CONFIG="${tmp}/brg-tools.json"
+br_expect "${others}" "${readers}" mcp__terminal__run_in_terminal "gh issue view 3" STORY_CONFIG="${tmp}/brg-tools.json"
+printf '{"board": {"readTools": ["(x"]}}\n' >"${tmp}/brg-badtool.json"
+brg "$(br_in C1 mcp__github__get_issue "")" STORY_CONFIG="${tmp}/brg-badtool.json"
+brg_deny && [[ "${out}" == *"'(x'"* ]] && pass "board-read: a bad board.readTools regex denies an MCP call and names the entry" || fail "board-read: a bad board.readTools regex passed" "code ${code}, ${out}"
+# spawn gate
+sp_in() { # sp_in <tool> <subagent_type> [model]
+  jq -cn --arg t "$1" --arg st "$2" --arg m "${3:-}" \
+    '{hook_event_name:"PreToolUse",session_id:"g-unbound",tool_name:$t,tool_input:({prompt:"read 5"} + (if $st == "" then {} else {subagent_type:$st} end) + (if $m == "" then {} else {model:$m} end))}'
+}
+sp_expect() { # sp_expect deny|pass <label> <json> [KEY=VALUE ...]
+  local want="$1" label="$2" json="$3"
+  shift 3
+  brg "${json}" "$@"
+  if [ "${want}" = deny ]; then brg_deny && pass "spawn: ${label} is denied" || fail "spawn: ${label} passed" "code ${code}, ${out}"
+  else brg_pass && pass "spawn: ${label} passes" || fail "spawn: ${label} was denied" "code ${code}, ${out}"; fi
+}
+sp_expect pass "story-reader with haiku" "$(sp_in Agent story-reader haiku)"
+for m in opus sonnet fable ""; do sp_expect deny "story-reader with model '${m:-none}'" "$(sp_in Agent story-reader "${m}")"; done
+for st in StoryReader story_reader "Story Reader" "story‐reader" "ｓｔｏｒｙ-reader" story-workflow:story-reader "Story-Workflow:Story_Reader"; do
+  sp_expect deny "${st} with opus" "$(sp_in Agent "${st}" opus)"
+done
+sp_expect pass "story-workflow:story-reader with haiku" "$(sp_in Agent story-workflow:story-reader haiku)"
+sp_expect deny "Task story-reader with opus" "$(sp_in Task story-reader opus)"
+sp_expect deny "story-reader with haiku under FORCE=1 and sonnet" "$(sp_in Agent story-reader haiku)" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 CLAUDE_CODE_SUBAGENT_MODEL=sonnet
+sp_expect deny "story-reader with haiku under FORCE=true and claude-opus-5-5" "$(sp_in Agent story-reader haiku)" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=true CLAUDE_CODE_SUBAGENT_MODEL=claude-opus-5-5
+sp_expect pass "story-reader with haiku and CLAUDE_CODE_SUBAGENT_MODEL=sonnet without FORCE" "$(sp_in Agent story-reader haiku)" CLAUDE_CODE_SUBAGENT_MODEL=sonnet
+sp_expect pass "story-reader with haiku under FORCE and claude-haiku-5-5" "$(sp_in Agent story-reader haiku)" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5
+sp_expect pass "story-reader with no model under FORCE and haiku" "$(sp_in Agent story-reader)" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 CLAUDE_CODE_SUBAGENT_MODEL=haiku
+sp_expect deny "story-reader with opus under FORCE and no model" "$(sp_in Agent story-reader opus)" CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1
+sp_expect pass "Explore with sonnet" "$(sp_in Agent Explore sonnet)"
+sp_expect pass "a fork (no subagent_type)" "$(sp_in Agent "")"
+# fail loud
+brg 'not json'
+[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'not JSON' "${tmp}/stderr" && pass "board-read: input that is not JSON exits 1 with the reason" || fail "board-read: input that is not JSON was not loud" "code ${code}, ${out}, $(cat "${tmp}/stderr")"
+brg "$(br_in C1 Bash 'gh issue view 3')" PATH="${tmp}/nojq"
+brg_deny && [[ "${out}" == *'jq is not on PATH'* ]] && pass "board-read: no jq denies a board read and names jq" || fail "board-read: no jq let a board read pass" "code ${code}, ${out}"
+brg "$(sp_in Agent story-reader haiku)" PATH="${tmp}/nojq"
+brg_deny && pass "board-read: no jq denies a reader spawn" || fail "board-read: no jq let a reader spawn pass" "code ${code}, ${out}"
+brg "$(br_in C1 Bash 'git status')" PATH="${tmp}/nojq"
+[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'jq is not on PATH' "${tmp}/stderr" && pass "board-read: no jq on git status exits 1 and names jq" || fail "board-read: no jq on git status was not loud" "code ${code}, ${out}"
+mkdir -p "${tmp}/noperl"
+for c in bash dirname cat grep tr; do ln -s "$(command -v "${c}")" "${tmp}/noperl/${c}"; done
+printf '#!/bin/sh\nPATH=%s exec jq "$@"\n' "'${PATH}'" >"${tmp}/noperl/jq" && chmod +x "${tmp}/noperl/jq"
+brg "$(br_in C1 Bash 'gh issue view 3')" PATH="${tmp}/noperl"
+brg_deny && [[ "${out}" == *'Check perl'* ]] && pass "board-read: no perl denies a board read and names perl" || fail "board-read: no perl let a board read pass" "code ${code}, ${out}"
+brg "$(br_in C1 Bash 'git status')" PATH="${tmp}/noperl"
+[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'Check perl' "${tmp}/stderr" && pass "board-read: no perl on git status exits 1 and names perl" || fail "board-read: no perl on git status was not loud" "code ${code}, ${out}"
+brg "$(br_in C8 Bash 'git status')" PATH="${tmp}/noperl"
+brg_deny && pass "board-read: no perl denies every command of the reader" || fail "board-read: no perl let the reader run a command" "code ${code}, ${out}"
+brg "$(br_in C1 Bash 'gh issue view 3 --comments "oops')"
+brg_deny && [[ "${out}" == *'cannot parse'* ]] && pass "board-read: an unbalanced quote in a board read denies with the parse reason" || fail "board-read: an unbalanced board read passed" "code ${code}, ${out}"
+br_expect "${readers}" "C1 C5" Bash 'git commit -m "oops'
+printf '{"board": {"reads": ["(unclosed"]}}\n' >"${tmp}/brg-badread.json"
+brg "$(br_in C1 Bash ls)" STORY_CONFIG="${tmp}/brg-badread.json"
+brg_deny && [[ "${out}" == *"'(unclosed'"* ]] && pass "board-read: a bad board.reads regex denies and names the entry" || fail "board-read: a bad board.reads regex passed" "code ${code}, ${out}"
+printf '{"board": {"reader": false}}\n' >"${tmp}/brg-off.json"
+br_expect "" "C1 C5" Bash "gh issue view 3" STORY_CONFIG="${tmp}/brg-off.json"
+sp_expect pass "story-reader with opus while board.reader is false" "$(sp_in Agent story-reader opus)" STORY_CONFIG="${tmp}/brg-off.json"
+printf '{"board": {"show": "jira issue view {id}", "reads": ["^bd show\\\\b"]}}\n' >"${tmp}/brg-show.json"
+br_expect "${others}" "${readers}" Bash "jira issue view PROJ-1" STORY_CONFIG="${tmp}/brg-show.json"
+br_expect "${others}" "${readers}" Bash "bd show 5" STORY_CONFIG="${tmp}/brg-show.json"
+br_expect "" "C1" Bash "jira project list" STORY_CONFIG="${tmp}/brg-show.json"
+br_expect "" "C1" Bash "bd list" STORY_CONFIG="${tmp}/brg-show.json"
+printf '{"board": {"reads": "x"}}\n' >"${tmp}/brg-str.json"
+printf '{"board": {"x": 1},}\n' >"${tmp}/brg-broken.json"
+printf '{"board": "x"}\n' >"${tmp}/brg-obj.json"
+for f in brg-str brg-broken brg-obj; do
+  bad=""
+  for t in Bash mcp__ccd_turn__wrap_up; do
+    brg "$(br_in C1 "${t}" ls)" STORY_CONFIG="${tmp}/${f}.json"
+    brg_deny && [[ "${out}" == *"${tmp}/${f}.json"* ]] || bad="${bad} ${t}: code ${code}, ${out};"
+  done
+  brg "$(sp_in Agent story-reader haiku)" STORY_CONFIG="${tmp}/${f}.json"; brg_pass || bad="${bad} reader spawn denied: ${out};"
+  brg "$(sp_in Agent story-reader opus)" STORY_CONFIG="${tmp}/${f}.json"; brg_deny || bad="${bad} opus reader spawn passed: ${out};"
+  [ -z "${bad}" ] && pass "board-read: ${f}.json denies commands and MCP calls with the file name, and the spawn gate still runs" || fail "board-read: ${f}.json" "${bad}"
+done
+# static: the reader definition, and the route of hooks.json
+agent_bad() { # agent_bad <agent file>: prints what the reader definition lacks
+  local fm dis t
+  fm="$(awk 'NR == 1 && /^---$/ { f = 1; next } f && /^---$/ { exit } f' "$1")"
+  grep -qx 'name: story-reader' <<<"${fm}" || echo "name is not story-reader"
+  grep -qx 'model: haiku' <<<"${fm}" || echo "model is not haiku"
+  grep -qx 'effort: low' <<<"${fm}" || echo "effort is not low"
+  dis="$(sed -n 's/^disallowedTools://p' <<<"${fm}" | tr -d ' ')"
+  for t in Edit Write NotebookEdit Agent; do case ",${dis}," in *",${t},"*) ;; *) echo "disallowedTools lacks ${t}" ;; esac; done
+  grep -Eiq '[0-9][0-9,]* *(characters|chars|words|lines|tokens)|(cut|truncate|trim|shorten)[a-z]* [a-z ]{0,20}(at|to|after) [0-9]' "$1" && echo "the body cuts text"
+  return 0
+}
+o="$(agent_bad "${repo}/agents/story-reader.md")"
+[ -z "${o}" ] && pass "reader: agents/story-reader.md is story-reader on haiku at low effort, cannot edit or spawn, and cuts no text" || fail "reader: the agent definition is wrong" "${o}"
+sed 's/^model: haiku$/model: sonnet/' "${repo}/agents/story-reader.md" >"${tmp}/reader-sonnet.md"
+[ -n "$(agent_bad "${tmp}/reader-sonnet.md")" ] && pass "reader: a definition with model sonnet fails" || fail "reader: model sonnet passed"
+{ cat "${repo}/agents/story-reader.md"; printf 'Cut each at 3000 characters.\n'; } >"${tmp}/reader-cut.md"
+[ -n "$(agent_bad "${tmp}/reader-cut.md")" ] && pass "reader: a definition that cuts text fails" || fail "reader: a cut rule passed"
+route_bad() { # route_bad <hooks.json>: prints each tool that does not reach board-read-guard.sh
+  local m t
+  m="$(jq -r '[.hooks.PreToolUse[]? | select(any(.hooks[]?; (.command // "") | test("/hooks/board-read-guard\\.sh"))) | .matcher] | join("|")' "$1")"
+  for t in Agent Task Bash Monitor mcp__terminal__run_in_terminal mcp__github__get_issue; do
+    [ -n "${m}" ] && [[ "${t}" =~ ^(${m})$ ]] || echo "${t}"
+  done
+}
+o="$(route_bad "${hooks}/hooks.json")"
+[ -z "${o}" ] && pass "route: hooks.json sends Agent, Task, Bash, Monitor and every MCP tool to board-read-guard.sh" || fail "route: these tools miss board-read-guard.sh" "${o}"
+jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; (.command // "") | test("board-read-guard"))) | .matcher) = "Bash"' "${hooks}/hooks.json" >"${tmp}/route-bash.json"
+[ -n "$(route_bad "${tmp}/route-bash.json")" ] && pass "route: a hooks.json that sends only Bash fails" || fail "route: a Bash-only route passed"
+
 # 6. syntax and shellcheck
 for f in "${hooks}"/*.sh "${repo}"/tests/*.sh; do
   bash -n "${f}" && pass "bash -n $(basename "${f}")" || fail "bash -n $(basename "${f}")"
 done
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -x -P "${hooks}" "${hooks}"/story-*.sh "${hooks}"/session-reprime.sh "${hooks}"/context-guard.sh \
-    "${hooks}"/role-guard.sh "${hooks}"/pre-compact.sh "${hooks}"/post-compact.sh "${hooks}"/plan-boundary.sh \
+    "${hooks}"/role-guard.sh "${hooks}"/board-read-guard.sh "${hooks}"/pre-compact.sh "${hooks}"/post-compact.sh "${hooks}"/plan-boundary.sh \
     "${hooks}"/lint-mark.sh "${repo}"/tests/*.sh \
     && pass "shellcheck" || fail "shellcheck"
 else
