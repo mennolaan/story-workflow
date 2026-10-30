@@ -6,7 +6,8 @@ The plugin holds:
 
 - `/story <id>`: makes the session the orchestrator of one story.
 - `/checkpoint`: saves the state of a session before a compaction or a `/clear`.
-- Hooks: a role guard for the child sessions, the context rule, the re-prime after a compaction, the compaction trail, and an optional plan-boundary reminder.
+- The story-reader agent: reads stories, tasks and issues on haiku and returns a digest.
+- Hooks: a role guard for the child sessions, a board-read guard that keeps board reads in the story-reader agent, the context rule, the re-prime after a compaction, the compaction trail, and an optional plan-boundary reminder.
 - The context-keeper mod: compacts at the turn boundary and resumes from the saved state.
 
 The plugin does nothing in a repo without `.claude/story.json`. Install it once, then turn it on per repo.
@@ -62,7 +63,10 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `backstopTokens` | The highest allowed `autoCompactWindow`. Default 432000. |
 | `baseBranch` | The branch that feature branches start from and PRs target, for example `main`. |
 | `branch` | The feature branch name. `{id}` is the work item id, `{slug}` the short name. |
-| `board.show` | The command that prints a story and its tasks. `{id}` is the work item id. |
+| `board.show` | The command that prints a story and its tasks. `{id}` is the work item id. The story-reader agent runs it. Its words before the first `{` word or option count as a board read, for example `gh issue view`. |
+| `board.reader` | `false` turns the board-read guard off. Default on. |
+| `board.reads` | Extra board read commands, as Perl regexes. They match like `guard.deny`, for example `^jira\\s+issue\\s+view\\b`. |
+| `board.readTools` | MCP tools that read the board, as Perl regexes. A regex must match the whole tool name, for example `mcp__github__(get_issue\|list_issues\|search_issues)`. Only the story-reader agent may call them. |
 | `pr.create` | The command that opens a draft PR. Placeholders: `{branch}`, `{base}`, `{ids}`, `{title}`, `{description}`. Without it the orchestrator asks you how to open the PR. |
 | `review` | Optional. `plan` (`{plan}` is the plan path), `changes`, `pr`, and `fallback` (run when the review command stops because a tool is missing). Without it the sessions skip the review and say so. |
 | `guard.deny` | Extra Perl regexes. The role guard splits a shell command into simple commands, removes the quotes, and joins the words of each simple command with single spaces. A regex that matches that text (with `/m`) denies the child session the command. It also sees the scripts that the command runs: `bash -c`, `eval`, `$(...)` and heredocs fed to a shell. A regex also matches argument text, so anchor it with `^` to match only a command, for example `^terraform\\s+apply\\b`. |
@@ -71,6 +75,16 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `conventions` | The file that holds the conventions and checks of the repo. The briefs send each session to it. Default `CLAUDE.md`. |
 
 The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. The orchestrator runs `story-bind.sh --adopt <child id>` after it starts a child, and only then does `clear_session` of that child run without a prompt: the guard also checks that the child's binding names the orchestrator as parent and carries its own file key. It also denies a child these MCP tools: `mcp__ccd_pr__*` except `get_status`, `start_session`, `move_to_cloud`, `clear_session`, the session tools that archive, delete, stop, detach, message or reconfigure a session, `set_session_title` for any session but its own, and the host tools that sync or clean up worktrees. `mcp__ccd_turn__*` and read-only tools stay open. Only the orchestrator acts outward.
+
+## Board reads
+
+A story or issue read returns large JSON. On the session model all of it stays in the context. `hooks/board-read-guard.sh` runs these reads in the story-reader agent (`agents/story-reader.md`) on haiku, which returns a short digest. The digest copies the description, the acceptance criteria and an issue body in full.
+
+- Every thread except the story-reader agent is denied a board read: the main thread of every session, and every other agent. The deny names the agent to use.
+- Board reads: `az boards work-item show` and `relation show`, `az boards query`, `az devops invoke` and `az rest` on work items (GET, or a POST of `wiql` or `workitemsbatch`), `gh issue view|list|status`, `gh search issues`, `gh project item-list`, `gh api` reads of issues and `gh api graphql` queries on issues, the command of `board.show`, each regex in `board.reads`, and each MCP tool in `board.readTools`.
+- The story-reader agent only reads. The guard denies it every board and issue write, every rule of the role guard (`git push`, `gh pr` writes, `az pipelines run`, `guard.deny`, the binding files), and every MCP tool outside `board.readTools`. It has no Edit, Write, NotebookEdit or Agent tool.
+- A story-reader spawn needs `model: "haiku"` on the Agent call. A repo can hold its own `story-reader` agent with another model, so the guard does not trust the frontmatter of any reader. While `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` sets every subagent to a model that is not haiku, the guard denies the spawn.
+- The story-reader agent is a subagent with `agent_id` and `agent_type` `story-workflow:story-reader` (or `story-reader`) in the hook input. A main thread started with `--agent story-reader` has no `agent_id`, so it is not the reader.
 
 ## Check it
 
@@ -96,4 +110,6 @@ The matrix exits 0 when every case passes. Each gate has a case that fails witho
 - `gh api graphql` is a POST for gh, so the guard denies it for a child. A review session that needs review threads asks the orchestrator.
 - Bash and zsh differ in rare syntax. The guard parses bash-like syntax and denies a command that it cannot parse.
 - The backstop check reads `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and the user, project, local and managed settings files. It does not see `--settings`, `--autocompact`, server-managed settings or the managed settings of an embedding host.
+- The board-read guard is a cost gate, not a security boundary. It does not see a read inside a script file, in another language (`python3 -c`), with `curl`, or in Codex. A mod whose `agent.spawn` hook sets a model overrides the `model` of the Agent call. A Workflow script that calls `agent()` with the reader type does not go through the Agent tool, so the spawn check does not see its model.
+- The digest is only as exact as the copy that haiku makes. The reader copies the acceptance criteria word for word. Check them against the board when a decision depends on one word.
 - Mod modules are early access, and their API can change between Claude Code releases. Run the checks after you update Claude Code.

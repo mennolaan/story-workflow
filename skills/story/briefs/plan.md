@@ -3,7 +3,7 @@ You are the PLAN session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks {{TA
 ## First steps
 1. Rename this session to `Plan · {{STORY_ID}} {{SHORT_TITLE}}` (`mcp__ccd_session_mgmt__set_session_title`, session `self`). Never put `❗` in it.
 2. Bind this session: `"{{PLUGIN}}/hooks/story-bind.sh" plan {{SLUG}} --parent {{ORCHESTRATOR_ID}}`.
-3. Read the story and its tasks: {{STORY_NOTES}}. Read the repo's {{CONVENTIONS}} and the docs the story touches.
+3. Read the story and its tasks with the story-reader agent: {{STORY_NOTES}}. Read the repo's {{CONVENTIONS}} and the docs the story touches.
 4. Your worktree is detached at `origin/{{BASE}}`. You change no tracked file.
 
 ## Phases

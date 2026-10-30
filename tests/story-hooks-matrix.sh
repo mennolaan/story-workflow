@@ -1189,6 +1189,18 @@ o="$(route_bad "${hooks}/hooks.json")"
 jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; (.command // "") | test("board-read-guard"))) | .matcher) = "Bash"' "${hooks}/hooks.json" >"${tmp}/route-bash.json"
 [ -n "$(route_bad "${tmp}/route-bash.json")" ] && pass "route: a hooks.json that sends only Bash fails" || fail "route: a Bash-only route passed"
 
+# static: /story and every brief read the board through the story-reader agent
+reader_lines_missing() { # reader_lines_missing <file>...: prints each line that names a board read without the story-reader agent
+  grep -n -H -E 'gh issue view|az boards work-item show|\{\{BOARD_SHOW\}\}' "$@" | grep -v 'story-reader'
+  return 0
+}
+o="$(reader_lines_missing "${story}/SKILL.md" "${story}"/briefs/*.md)"
+[ -z "${o}" ] && pass "reader: every line of /story and the briefs that names a board read names the story-reader agent" || fail "reader: a board read outside the story-reader agent" "${o}"
+printf 'Run {{BOARD_SHOW}}.\n' >"${tmp}/brief-read.md"
+[ -n "$(reader_lines_missing "${tmp}/brief-read.md")" ] && pass "reader: a brief line that runs {{BOARD_SHOW}} itself fails" || fail "reader: a direct board read in a brief passed"
+grep -q 'board-read-guard.sh' "${story}/SKILL.md" && grep -q 'board-read-guard.sh' "${repo}/README.md" \
+  && pass "reader: /story and the README name board-read-guard.sh" || fail "reader: /story or the README does not name board-read-guard.sh"
+
 # 6. syntax and shellcheck
 for f in "${hooks}"/*.sh "${repo}"/tests/*.sh; do
   bash -n "${f}" && pass "bash -n $(basename "${f}")" || fail "bash -n $(basename "${f}")"

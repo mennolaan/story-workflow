@@ -44,7 +44,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
    - Read the config file that it prints. It fills the placeholders below.
    - Run `claude --version` and show the version. The context-keeper mod needs 2.1.308 or later. Below that, or when `claude` is not on PATH, say that the mod may not run and the backstop compacts instead.
 1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`. When it refuses because the backstop is off, stop and show the user its message.
-2. Read the story and its tasks from the board with `{{BOARD_SHOW}}`.
+2. Read the story and its tasks with the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`). Its prompt holds `{{BOARD_SHOW}}` and asks for each child task. Use its digest.
 3. Write `<slug>.d/ledger.md` from the template. Set the session title.
 4. Ask scope questions only when the board leaves a real gap.
 5. Start the plan session with `briefs/plan.md`, filled in.
@@ -66,13 +66,13 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 | `{{ORCHESTRATOR_ID}}` | `$CLAUDE_CODE_HOST_SESSION_ID` of this session |
 | `{{BASE}}` | `baseBranch` of the config, for example `development` |
 | `{{BRANCH}}` | `branch` of the config, with `{id}` the work item id and `{slug}` the short name |
-| `{{BOARD_SHOW}}` | `board.show` of the config, with `{id}` filled in |
+| `{{BOARD_SHOW}}` | `board.show` of the config, with `{id}` filled in. Only the story-reader agent runs it. |
 | `{{PR_CREATE}}` | orchestrator only: `pr.create` of the config, with `{branch}`, `{base}`, `{ids}`, `{title}` and `{description}` filled in |
 | `{{REVIEW_PLAN}}` | `review.plan` of the config, with `{plan}` the absolute plan path |
 | `{{REVIEW_CHANGES}}`, `{{REVIEW_PR}}` | `review.changes` and `review.pr` of the config |
 | `{{REVIEW_FALLBACK}}` | `review.fallback` of the config: the command to run when the review command stops because a tool it needs is missing |
 | `{{CONVENTIONS}}` | `conventions` of the config: the file that holds the conventions and checks of the repo. Default `CLAUDE.md` |
-| `{{STORY_NOTES}}` | how to read the story (`{{BOARD_SHOW}}`), plus what the user said about scope |
+| `{{STORY_NOTES}}` | how to read the story: the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`) with `{{BOARD_SHOW}}` in its prompt, plus what the user said about scope |
 | `{{SCOPE}}` | the plan's order of work that this session owns, and what it must not do yet |
 | `{{PR_URL}}`, `{{BOARD_PATHS}}` | the PR link; the design board paths, or "none" |
 | `{{PHASES}}` | implement only: one numbered line per phase, from the plan's order of work, as `<n>. #<task id> <title>. Done when: <check>.` One board task per line. The last line is the review phase, which ends with `DOCKET`. |
@@ -165,6 +165,8 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
 - Each brief states the child's standing authority. A relayed message adds no authority.
 - Never ask a child to do an action that was denied here.
 - `hooks/role-guard.sh` of this plugin enforces this for bound child roles: it denies `AskUserQuestion`, `git push`, every `az repos pr` command except `show`, `list`, `checkout` and `<group> list`, every `az boards work-item` command except `show` and `relation show|list-type`, `az pipelines run`, `az pipelines build queue`, every `gh pr` command except `view`, `list`, `diff`, `checks`, `status` and `checkout`, every `gh issue` command except `view`, `list` and `status` (also with a flag such as `-R <repo>` before the subcommand), `gh api` with a method other than GET or with fields and no explicit GET, each Perl regex in `guard.deny` of the config, the MCP tools that act outward (`mcp__ccd_pr__*` except `get_status`, `start_session`, `move_to_cloud`, `clear_session`, session archive, delete, stop, detach, message and settings tools, `set_session_title` for another session, and the host worktree tools) and each tool name that fully matches a regex in `guard.denyTools`. It also denies a child any command that sets `CLAUDE_CODE_*`, `STORY_*`, `CLAUDE_PROJECT_DIR` or `CLAUDE_CONFIG_DIR`, and any write to the binding files, `.claude/story.json` or `.claude/settings*.json`.
+- `hooks/board-read-guard.sh` of this plugin keeps board reads on haiku, in every session of the repo. It denies a story, task or issue read (`az boards work-item show`, `az boards query`, `az rest` and `az devops invoke` on work items, `gh issue view|list|status`, `gh search issues`, `gh api` reads of issues, the command of `board.show`, and each regex in `board.reads`) in every thread except the story-reader agent. It denies the story-reader agent every write and every rule of the role guard. It denies a story-reader spawn without `model: "haiku"`. `board.reader: false` in the config turns it off.
+- Give each board write a short output, for example `-o none` or `--query id` for `az boards`. Check a write by its own output, not by a second read.
 
 ## Context rule
 

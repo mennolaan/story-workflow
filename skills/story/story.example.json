@@ -3,7 +3,7 @@
   "backstopTokens": 432000,
   "baseBranch": "main",
   "branch": "feature/{id}-{slug}",
-  "board": { "show": "gh issue view {id}" },
+  "board": { "show": "gh issue view {id}", "reads": [], "readTools": [] },
   "pr": { "create": "gh pr create --draft --base {base} --head {branch} --title {title} --body {description}" },
   "guard": { "deny": [], "denyTools": [] },
   "planBoundary": false,

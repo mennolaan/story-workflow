@@ -9,7 +9,7 @@ You are the PR-REVIEW session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks
 ## Phases
 One phase per turn, in this order. One board task per phase.
 1. `#{{REVIEW_TASK}}` Read and review.
-   - Read the story and its tasks from the board with `{{BOARD_SHOW}}` (read only). The acceptance criteria are the yardstick.
+   - Read the story and its tasks with the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`, `{{BOARD_SHOW}}` in its prompt). The acceptance criteria in its digest are the yardstick.
    - Review the PR per the PR review rules of the repo's {{CONVENTIONS}}. Write the docket to `{{PLANS}}/{{SLUG}}.d/pr-review-docket.md`.
    - End the turn with recap first line `PHASE DONE #{{REVIEW_TASK}} -`.
 2. `#{{REVIEW_TASK}}` Panel.
