@@ -26,6 +26,18 @@
 # - A write to the binding folder (STORY_SESSIONS_DIR, or any path with a
 #   .sessions segment): rm, mv, cp, tee, truncate, ln, sed -i, and > or >>.
 # Unbalanced quotes or parentheses give a parse line, so the child is denied.
+#
+# Board mode (STORY_GUARD_MODE=board, for board-read-guard.sh): every simple
+# command is classified, not only the first hit. It prints one line per hit:
+#   read<TAB><label>   a story, task or issue read (az boards work-item show,
+#                      az boards query, az devops invoke and az rest on wit,
+#                      gh issue view|list|status, gh search issues, gh project
+#                      item-list, gh api on issues, a graphql query on issues,
+#                      a prefix in STORY_BOARD_SHOW, a regex in STORY_BOARD_READS)
+#   write<TAB><label>  a board or issue write, or anything the default mode denies
+#   badread<TAB><entry><TAB><why>  a STORY_BOARD_READS entry that is not a regex
+# A read rule wins over the default rules for the same command, so a WIQL POST
+# is a read, not a write. parse and bad lines are the same as in the default mode.
 use strict;
 use warnings;
 
@@ -40,6 +52,28 @@ for my $re (grep { length } split /\n/, ($ENV{STORY_GUARD_DENY} // '')) {
     exit 0;
   }
   push @deny, [$re, $q];
+}
+my $BOARD = ($ENV{STORY_GUARD_MODE} // '') eq 'board';
+my (@HITS, @READS, @SHOW);
+if ($BOARD) {
+  for my $re (grep { length } split /\n/, ($ENV{STORY_BOARD_READS} // '')) {
+    my $q = eval { qr/$re/ };
+    if (!defined $q) {
+      (my $e = $@) =~ s/ at \S+ line \d+.*//s;
+      print "badread\t$re\t$e\n";
+      exit 0;
+    }
+    push @READS, [$re, $q];
+  }
+  @SHOW = grep { length } split /\n/, ($ENV{STORY_BOARD_SHOW} // '');
+}
+
+# denied: the deny line in the default mode. In board mode it records a write
+# hit and returns nothing, so the analysis goes on to the next command.
+sub denied {
+  my ($why) = @_;
+  if ($BOARD) { push @HITS, "write\t$why"; return; }
+  return "deny\t$why";
 }
 
 
@@ -469,6 +503,126 @@ sub gh_api {
   return;
 }
 
+# optval: the value of the first named option in the argv ref ("--x v" or "--x=v").
+sub optval {
+  my ($a, @names) = @_;
+  my %n = map { $_ => 1 } @names;
+  for (my $j = 0; $j < @$a; $j++) {
+    my $w = $a->[$j];
+    return $a->[$j + 1] if $n{$w} && $j + 1 < @$a;
+    return $2 if $w =~ /^(--[A-Za-z-]+)=(.*)$/s && $n{$1};
+  }
+  return;
+}
+
+my %GH_API_VALUE = map { $_ => 1 } qw(-X --method -H --header -f --raw-field -F --field --input -q --jq -t --template -p --preview --hostname --cache);
+
+# gh_api_board: (kind, label) for a gh api call on issues, or nothing.
+sub gh_api_board {
+  my @a = @_;
+  my ($ep, @fields);
+  for (my $j = 0; $j < @a; $j++) {
+    my $w = $a[$j];
+    if ($w =~ /^-/) {
+      if ($GH_API_VALUE{$w}) { push @fields, $a[$j + 1] // '' if $w =~ /^(?:-f|-F|--field|--raw-field)$/; $j++; }
+      elsif ($w =~ /^--(?:field|raw-field)=(.*)$/s) { push @fields, $1; }
+      elsif ($w =~ /^-[fF](.+)$/s) { push @fields, $1; }
+      next;
+    }
+    $ep //= $w;
+  }
+  return unless defined $ep;
+  if ($ep eq 'graphql') {
+    my ($query) = map { /^query=(.*)$/s ? $1 : () } @fields;
+    return unless defined $query;
+    return ('write', 'run gh api graphql with a mutation') if $query =~ /^\s*mutation\b/;
+    return ('read', 'run gh api graphql on issues') if $query =~ /\bissues?\s*[({]/;
+    return;
+  }
+  (my $path = $ep) =~ s{^/+}{};
+  return unless $path =~ m{^repos/[^/]+/[^/]+/issues(?:[/?]|$)} || $path =~ m{^search/issues(?:[?]|$)};
+  my $w = gh_api(@a);
+  return ('write', $w) if defined $w;
+  return ('read', "run gh api $path");
+}
+
+# board_class: (read|write, label) for a story, task or issue command, or nothing.
+sub board_class {
+  my @a = @_;
+  my $text = join ' ', @a;
+  for my $p (@SHOW) { return ('read', "run $p") if $text eq $p || index($text, "$p ") == 0; }
+  for my $d (@READS) { return ('read', "run a command that matches the board.reads entry $d->[0]") if $text =~ $d->[1]; }
+  my $cmd = $a[0];
+  if ($cmd eq 'az') {
+    my @p;
+    my $VAL = qr/^(?:--output|-o|--query|--subscription|--organization|--org|--project|-p|--detect)$/;
+    for (my $j = 1; $j < @a; $j++) {
+      my $w = $a[$j];
+      if ($w =~ /^-/) { $j++ if $w =~ $VAL && $w !~ /=/; next; }
+      push @p, $w;
+    }
+    my ($g, $s, $v, $x) = map { $_ // '' } @p[0 .. 3];
+    if ($g eq 'boards' && $s eq 'work-item') {
+      return if $v eq '';
+      return ('read', 'run az boards work-item show') if $v eq 'show';
+      if ($v eq 'relation') {
+        return ('read', 'run az boards work-item relation show') if $x eq 'show';
+        return if $x eq '' || $x eq 'list-type';
+        return ('write', "run az boards work-item relation $x");
+      }
+      return ('write', "run az boards work-item $v");
+    }
+    return ('read', 'run az boards query') if $g eq 'boards' && $s eq 'query';
+    if ($g eq 'devops' && $s eq 'invoke') {
+      return unless lc(optval(\@a, '--area') // '') eq 'wit';
+      my $m = uc(optval(\@a, '--http-method') // 'GET');
+      my $res = lc(optval(\@a, '--resource') // '');
+      return ('read', "run az devops invoke --area wit --resource $res") if $m eq 'GET' || ($m eq 'POST' && $res =~ /^(?:wiql|workitemsbatch)$/);
+      return ('write', "run az devops invoke --area wit with the method $m");
+    }
+    if ($g eq 'rest') {
+      my $url = optval(\@a, '--url', '--uri', '-u') // return;
+      return unless $url =~ m{/_apis/wit/}i;
+      my $m = uc(optval(\@a, '--method', '-m') // 'GET');
+      return ('read', 'run az rest on a work item URL') if $m eq 'GET' || ($m eq 'POST' && $url =~ m{/_apis/wit/(?:wiql|workitemsbatch)(?:[/?]|$)}i);
+      return ('write', "run az rest with the method $m on a work item URL");
+    }
+    return;
+  }
+  if ($cmd eq 'gh') {
+    my $i = 1;
+    my $skip = sub { while ($i < @a && $a[$i] =~ /^-/) { my $o = $a[$i]; $i += ($o =~ /^(?:-R|--repo|--hostname)$/) ? 2 : 1; } };
+    $skip->();
+    my $group = $a[$i] // return;
+    $i++;
+    return gh_api_board(@a[$i .. $#a]) if $group eq 'api';
+    $skip->();
+    my $verb = $a[$i] // '';
+    if ($group eq 'issue') {
+      return if $verb eq '';
+      return ('read', "run gh issue $verb") if $GH_ISSUE_READ{$verb};
+      return ('write', "run gh issue $verb");
+    }
+    return ('read', 'run gh search issues') if $group eq 'search' && $verb eq 'issues';
+    return ('read', 'run gh project item-list') if $group eq 'project' && $verb eq 'item-list';
+    return;
+  }
+  return;
+}
+
+# verdict: the deny line for one argv in the default mode. In board mode a
+# board command records its read or write hit; any other command records the
+# default deny as a write hit. It returns nothing in board mode.
+sub verdict {
+  my @argv = @_;
+  if ($BOARD) {
+    my ($kind, $label) = board_class(@argv);
+    if (defined $kind) { push @HITS, "$kind\t$label"; return; }
+  }
+  my $r = rules(@argv);
+  return defined $r ? denied($r) : undef;
+}
+
 # rules: the built-in deny rules on one normalized argv.
 sub rules {
   my @a = @_;
@@ -594,7 +748,7 @@ sub check_argv {
     return;
   }
   if ($b eq 'source' || $b eq '.' || $SHELL{$b}) {
-    return "deny\trun a script from a process substitution that the guard cannot see ($b)" if grep { $_ eq 'PROCESS' } @argv[1 .. $#argv];
+    return denied("run a script from a process substitution that the guard cannot see ($b)") if grep { $_ eq 'PROCESS' } @argv[1 .. $#argv];
     my @sh = $b eq 'source' || $b eq '.' ? ((grep { $_ eq '/dev/stdin' } @argv) ? (0) : ()) : shell_script(@argv);
     if (@sh && $sh[0]) { return analyse($sh[1], $depth + 1); }
     if (@sh) {
@@ -618,8 +772,8 @@ sub check_argv {
       my @sub;
       for (my $m = $j + 1; $m < @argv && $argv[$m] ne ';' && $argv[$m] ne '+'; $m++) { push @sub, $argv[$m]; }
       my @n = normalize(@sub);
-      if (defined $DYN) { return "deny\trun a command whose name the guard cannot read ($DYN)"; }
-      if (@n) { my $r = check_argv($c, $k, $cmds, $depth, @n); return $r if defined $r; my $d = rules(@n); return "deny\t$d" if defined $d; }
+      if (defined $DYN) { return denied("run a command whose name the guard cannot read ($DYN)"); }
+      if (@n) { my $r = check_argv($c, $k, $cmds, $depth, @n); return $r if defined $r; my $d = verdict(@n); return $d if defined $d; }
     }
   }
   if ($b eq 'git') {
@@ -634,9 +788,7 @@ sub check_argv {
       }
     }
   }
-  my $r = rules(@argv);
-  return "deny\t$r" if defined $r;
-  return;
+  return verdict(@argv);
 }
 
 my $ASSIGN = qr/^(?:CLAUDE_CODE_[A-Z0-9_]+|STORY_[A-Z0-9_]+|CLAUDE_PROJECT_DIR|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT)=/;
@@ -658,8 +810,9 @@ sub analyse {
     }
     for my $sub (@nested) { my $r = analyse($sub, $depth + 1); return $r if defined $r; }
     for my $r (@{$c->{redirs}}) {
-      return "deny\twrite to the binding files or the repo config ($r->[0] $r->[1]). Only story-bind.sh of the orchestrator does that"
-        if $r->[0] =~ /^>/ && protected($r->[1]);
+      next unless $r->[0] =~ /^>/ && protected($r->[1]);
+      my $d = denied("write to the binding files or the repo config ($r->[0] $r->[1]). Only story-bind.sh of the orchestrator does that");
+      return $d if defined $d;
     }
     my $first = base(($c->{words}[0] // ''));
     for my $wi (0 .. $#{$c->{words}}) {
@@ -667,15 +820,19 @@ sub analyse {
       next unless $w =~ $ASSIGN;
       next if $c->{quoted}[$wi] && $first !~ /^(?:export|declare|typeset|readonly|local|env|sh|bash|zsh)$/;
       (my $name = $w) =~ s/=.*//s;
-      return "deny\tset $name in a command. The session identity and the story variables belong to the harness";
+      my $d = denied("set $name in a command. The session identity and the story variables belong to the harness");
+      return $d if defined $d;
     }
     for my $d (@deny) {
       for my $text (join(' ', @{$c->{words}}), join(' ', normalize(@{$c->{words}}))) {
-        return "deny\trun a command that matches the guard.deny entry $d->[0]" if length $text && $text =~ $d->[1];
+        next unless length $text && $text =~ $d->[1];
+        my $x = denied("run a command that matches the guard.deny entry $d->[0]");
+        return $x if defined $x;
+        last;
       }
     }
     my @argv = normalize(@{$c->{words}});
-    return "deny\trun a command whose name the guard cannot read ($DYN)" if defined $DYN;
+    if (defined $DYN) { my $x = denied("run a command whose name the guard cannot read ($DYN)"); return $x if defined $x; next; }
     next unless @argv;
     my $r = check_argv($c, $k, $cmds, $depth, @argv);
     return $r if defined $r;
@@ -686,5 +843,6 @@ sub analyse {
 local $/;
 my $input = <STDIN> // '';
 my $hit = analyse($input, 0);
+if ($BOARD) { my %seen; print "$_\n" for grep { !$seen{$_}++ } @HITS; }
 print "$hit\n" if defined $hit;
 exit 0;
