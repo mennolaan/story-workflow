@@ -1045,6 +1045,9 @@ br_reads=(
   "gh search issues \"label:story\"" "gh project item-list 1 --owner o"
   "gh api repos/o/r/issues/12" "gh api \"/repos/{owner}/{repo}/issues?state=open\" --paginate" "gh api -X GET search/issues -f q=repo:o/r"
   "gh api graphql -f query='query { repository(owner:\"o\", name:\"r\") { issue(number: 1) { title } } }'"
+  "gh api graphql -f query='query { repository(owner:\"o\", name:\"r\") { issue(number: 1) { title } } } # no mutation'"
+  "gh api graphql -f query='query { repository(owner:\"o\", name:\"r\") { issues(first: 5, labels: [\"mutation\"]) { nodes { title } } } }'"
+  "gh api graphql -f query='query { mutation: repository(owner:\"o\", name:\"r\") { issue(number: 1) { title } } }'"
   "bash -c 'az boards work-item show --id 5'" "echo \"\$(gh issue view 3)\"" "cd x && /opt/homebrew/bin/az boards work-item show --id 5" "env A=1 gh issue view 3"
 )
 for c in "${br_reads[@]}"; do br_expect "${others}" "${readers}" Bash "${c}"; done

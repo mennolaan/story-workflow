@@ -519,6 +519,27 @@ sub optval {
 
 my %GH_API_VALUE = map { $_ => 1 } qw(-X --method -H --header -f --raw-field -F --field --input -q --jq -t --template -p --preview --hostname --cache);
 
+# graphql_text: a GraphQL document without its comments and strings. GraphQL
+# ignores a comment, and a string is a value, not a keyword.
+sub graphql_text {
+  (my $doc = $_[0]) =~ s/"""(?:[^"\\]|\\.|"(?!""))*"""|"(?:[^"\\\r\n]|\\.)*"|#[^\r\n]*/ /gs;
+  return $doc;
+}
+
+# graphql_mutation: true when an operation of the document is a mutation: the
+# word mutation outside every brace and parenthesis. Inside them it is a field,
+# an alias or an argument.
+sub graphql_mutation {
+  my ($doc) = @_;
+  my $depth = 0;
+  while ($doc =~ /([{(])|([})])|\b(mutation)\b/g) {
+    if (defined $1) { $depth++; }
+    elsif (defined $2) { $depth-- if $depth > 0; }
+    elsif ($depth == 0) { return 1; }
+  }
+  return 0;
+}
+
 # gh_api_board: (kind, label) for a gh api call on issues, or nothing.
 sub gh_api_board {
   my @a = @_;
@@ -537,8 +558,9 @@ sub gh_api_board {
   if ($ep eq 'graphql') {
     my ($query) = map { /^query=(.*)$/s ? $1 : () } @fields;
     return unless defined $query;
-    return ('write', 'run gh api graphql with a mutation') if $query =~ /\bmutation\b/;
-    return ('read', 'run gh api graphql on issues') if $query =~ /\bissues?\s*[({]/;
+    my $doc = graphql_text($query);
+    return ('write', 'run gh api graphql with a mutation') if graphql_mutation($doc);
+    return ('read', 'run gh api graphql on issues') if $doc =~ /\bissues?\s*[({]/;
     return;
   }
   (my $path = $ep) =~ s{^/+}{};
