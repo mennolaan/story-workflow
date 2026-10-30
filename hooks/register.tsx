@@ -40,7 +40,7 @@ const SENTINEL = /^CHECKPOINT-READY:\s*(.+?)\s*\|\s*(continue|wait)\s*$/
 const clean = (s: string | undefined) => (s ?? '').replace(/[^A-Za-z0-9._-]/g, '')
 
 /** A resume the mod owes after its own compaction: the turn end it follows, and the state file's mtime before the compaction. */
-type Pending = { w: Where; since: number; mtimeMs: number; token: number }
+type Pending = { w: Where; since: number; mtimeMs: number; token: number; isCompacted?: true }
 
 const mem: {
   promptedFor?: number
@@ -194,9 +194,18 @@ const armResume = ($: $) => {
   $.clock.after(RESUME_MS, () => void resume($, token))
 }
 
-// A turn that runs at the check moves it to that turn's end (turn.complete arms it
-// again). A prompt, a draft, a wait sentinel or a state file written after the
-// compaction means the session already went on, so it gets no resume prompt.
+/** Marks the pending resume as owed from now on, and arms its check. */
+const compacted = ($: $) => {
+  if (mem.resume === undefined) return
+  mem.resume.isCompacted = true
+  armResume($)
+}
+
+// A turn that started before the compaction ended and runs at the check moves it to
+// that turn's end (turn.complete arms it again). A turn that starts after the
+// compaction (turn.start cancels it), a prompt, a draft, a wait sentinel or a state
+// file written after the compaction means the session already went on, so it gets
+// no resume prompt.
 const resume = async ($: $, token: number) => {
   const r = mem.resume
   if (r === undefined || r.token !== token || mem.isBusy) return
@@ -273,7 +282,7 @@ const tryCompact = async ($: $, w: Where, since: number, tries: number, last = '
   await $.fs.write(crossedFile(w), '')
   mem.promptedFor = undefined
   mem.toastedFor = undefined
-  if (!done.isQueued) armResume($)
+  if (!done.isQueued) compacted($)
 }
 
 // A turn or a person's prompt in the delay before this runs wins. promptedFor is
@@ -350,8 +359,16 @@ export const register: Register = on => {
     return started
   })
 
-  on('turn.start', ($, e, next) => {
-    if (e.agentId === undefined) mem.isBusy = true
+  // A background job's notice starts a turn with no prompt.submit, so this hook, not
+  // personPromptAt, sees it.
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      mem.isBusy = true
+      if (mem.resume?.isCompacted) {
+        mem.resume = undefined
+        await log($, 'a turn started after the compaction, so the session does not resume')
+      }
+    }
     return next(e)
   })
 
@@ -386,7 +403,7 @@ export const register: Register = on => {
     const done = await next({ ...e, instructions: merged })
     // A throw here would make the .catch below run the compaction a second time.
     try {
-      armResume($)
+      compacted($)
     } catch (err) {
       await log($, `the resume after the compaction was not armed: ${String(err)}`)
     }

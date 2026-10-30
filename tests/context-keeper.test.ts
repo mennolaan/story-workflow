@@ -381,15 +381,15 @@ const LATER = T0 + 60_000
 
 // Each test below drops the context after the compaction, as a real compaction does.
 
-test('a turn after the compaction that sets the checkpoint to wait gets no resume prompt', async ($, on) => {
+test('a turn that spans the compaction and sets the checkpoint to wait gets no resume prompt', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
-  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
   const w = world(on, options)
   await $.turn.complete(turnEnd())
   await clock.advance(500)
-  options.percent = 10
-  expect(w.compacts.length).toBe(1)
   await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  options.percent = 10
   w.files.set(STATE, { text: checkpoint('wait'), mtimeMs: LATER })
   await $.turn.complete({ ...turnEnd(), turnId: 't2' })
   await settle(clock)
@@ -398,12 +398,13 @@ test('a turn after the compaction that sets the checkpoint to wait gets no resum
 
 test('a checkpoint rewritten after the compaction, still continue, gets no resume prompt', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
-  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
   const w = world(on, options)
   await $.turn.complete(turnEnd())
   await clock.advance(500)
-  options.percent = 10
   await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  options.percent = 10
   w.files.set(STATE, { text: checkpoint('continue').replace('run the matrix again', 'push the branch'), mtimeMs: LATER })
   await $.turn.complete({ ...turnEnd(), turnId: 't2' })
   await settle(clock)
@@ -424,14 +425,15 @@ test('a host message after the compaction blocks the resume prompt', async ($, o
   expect(w.prompts).toEqual(['a side session finished'])
 })
 
-test('a turn that runs at the resume check moves the check to its end', async ($, on) => {
+test('a turn that started before the compaction ended and runs at the resume check moves the check to its end', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
-  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
   const w = world(on, options)
   await $.turn.complete(turnEnd())
   await clock.advance(500)
-  options.percent = 10
   await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  options.percent = 10
   await settle(clock)
   expect(w.prompts).toEqual([])
   await $.turn.complete({ ...turnEnd(), turnId: 't2' })
@@ -450,14 +452,15 @@ test('a /compact submission does not count as a prompt that blocks the resume', 
   expect(w.prompts).toEqual(['/compact', RESUME])
 })
 
-test('an aborted turn after the compaction cancels the pending resume', async ($, on) => {
+test('a turn that started before the compaction ended and is aborted after it cancels the pending resume', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
-  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
   const w = world(on, options)
   await $.turn.complete(turnEnd())
   await clock.advance(500)
-  options.percent = 10
   await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  options.percent = 10
   await $.turn.complete({ ...turnEnd({ isAborted: true }), turnId: 't2' })
   await settle(clock)
   expect(w.prompts).toEqual([])
@@ -480,17 +483,48 @@ test('the resume waits 3 seconds after the compaction, so a host message 1 secon
 
 test('a turn that ends inside the delay starts the 3 seconds again', async ($, on) => {
   const clock = mock.clock(on, { now: T0 })
-  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
   const w = world(on, options)
   await $.turn.complete(turnEnd())
   await clock.advance(500)
-  options.percent = 10
-  await clock.advance(500)
   await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  options.percent = 10
   await clock.advance(1_000)
   await $.turn.complete({ ...turnEnd(), turnId: 't2' })
   await clock.advance(2_000)
   expect(w.prompts).toEqual([])
   await clock.advance(1_500)
   expect(w.prompts).toEqual([RESUME])
+})
+
+test('a turn that starts after the compaction cancels the resume, also without a prompt', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  options.percent = 10
+  expect(w.compacts.length).toBe(1)
+  // A background job's notice starts a turn with no prompt.submit.
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+  expect(w.files.get(LOG)?.text ?? '').toContain('a turn started after the compaction')
+})
+
+test('on a headless host, a turn that starts after /compact ends cancels the resume', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const options = { percent: 36, state: fresh('continue'), crossed: crossedAt, headless: true }
+  const w = world(on, options)
+  await $.turn.complete(turnEnd())
+  await clock.advance(500)
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  options.percent = 10
+  await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+  await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+  await settle(clock)
+  expect(w.prompts).toEqual([])
+  expect(w.files.get(LOG)?.text ?? '').toContain('a turn started after the compaction')
 })
