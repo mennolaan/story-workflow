@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Held-out check for the story hooks: context-guard.sh, session-reprime.sh,
-# role-guard.sh, pre-compact.sh, post-compact.sh, story-bind.sh, the bound
-# branch of plan-boundary.sh, the hook routing in hooks/hooks.json, and the
-# skill files of the story-workflow plugin.
+# role-guard.sh, pre-compact.sh, post-compact.sh, story-bind.sh,
+# story-groups.sh, the bound branch of plan-boundary.sh, the hook routing in
+# hooks/hooks.json, and the skill files of the story-workflow plugin.
 # Every case is falsifying: it fails when the branch it names is removed.
 # Fixtures live in a temp folder (STORY_PLANS_DIR, STORY_CONFIG). The session
 # ids of the calling session are unset, so a run inside Claude Code tests the
@@ -1230,6 +1230,115 @@ printf 'Run {{BOARD_SHOW}}.\n' >"${tmp}/brief-read.md"
 [ -n "$(reader_lines_missing "${tmp}/brief-read.md")" ] && pass "reader: a brief line that runs {{BOARD_SHOW}} itself fails" || fail "reader: a direct board read in a brief passed"
 grep -q 'board-read-guard.sh' "${story}/SKILL.md" && grep -q 'board-read-guard.sh' "${repo}/README.md" \
   && pass "reader: /story and the README name board-read-guard.sh" || fail "reader: /story or the README does not name board-read-guard.sh"
+
+# 5c. story-groups: the independence test of parallel tracks
+sg="${hooks}/story-groups.sh"
+printf '{"parallel":{"max":3,"shared":["docs/wiki/**","**/Migrations/**","**/package-lock.json","CLAUDE.md","AGENTS.md"]}}\n' >"${tmp}/sg-cfg.json"
+sg_run() { out="$(STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" "$@" 2>&1)"; code=$?; }
+sg_plan() { # sg_plan <file> <rows...>: a plan with a claims table under Order of work, and a decoy table above it
+  local f="$1"; shift
+  { printf '# Plan\n\n## Goal\n\n| Task | Wave | Depends | Files | Track |\n|---|---|---|---|---|\n| 1 | T | - | `x` | A |\n\n## Order of work\n\nPhases below.\n\n| Task | Wave | Depends | Files | Track |\n|---|---|---|---|---|\n'
+    for r in "$@"; do printf '%s\n' "${r}"; done
+    printf '\n1. **#1 x.** Done when: y.\n\n## Review\n'; } >"${f}"
+}
+
+# Story 428 as its plan read on 2026-11-02: 432 may add its job to JobService.cs.
+R428=(
+'| #429 | F | - | `backend/Eiffel.Infrastructure/Data/`, `backend/Eiffel.Core/Abstractions/IConsultantIdentityStore.cs`, `backend/Eiffel.Infrastructure/Ingestion/EasyCv/EmployeeKeyMap.cs` | - |'
+'| #674 | F | 429 | `backend/Eiffel.Api/Endpoints/ProfileEndpoints.cs#own-consultant`, `backend/Eiffel.Api/Endpoints/CvDocumentEndpoints.cs#own-consultant` | - |'
+'| #430 | T | 429 | `backend/Eiffel.Infrastructure/Ingestion/EasyCv/EmployeeKeyLoader.cs`, `backend/Eiffel.Infrastructure/Ingestion/Bullhorn/BullhornLinkPass.cs`, `backend/Eiffel.Api/Services/JobService.cs` | A |'
+'| #431 | T | 429 | `backend/Eiffel.Infrastructure/Ingestion/Afas/AfasAvailabilityLoader.cs`, `backend/Eiffel.Infrastructure/Ingestion/Ted/TedEmployeeLoader.cs` | A |'
+'| #676 | T | 431 | `backend/Eiffel.Infrastructure/Ingestion/Ted/TedEmployeeLoader.cs` | A |'
+'| #432 | T | 429 | `backend/Eiffel.Infrastructure/Ingestion/Bullhorn/BullhornPlacementLoader.cs`, `backend/Eiffel.Core/Options/BullhornPlacementOptions.cs`, `backend/Eiffel.Pipeline/appsettings.json`, `backend/Eiffel.Core/Eval/`, `backend/Eiffel.Core/Models/Eval.cs`, `backend/Eiffel.Api/Services/JobService.cs` | B |'
+'| #675 | T | 432 | `backend/Eiffel.Core/Eval/`, `backend/Eiffel.Core/Pipeline/MatchingPipeline.cs#eval-block` | B |'
+'| #634 | T | 429 | `backend/Eiffel.Api/Endpoints/ConsultantLinkEndpoints.cs`, `backend/Eiffel.Core/Matching/RunExclusion.cs`, `backend/Eiffel.Core/Pipeline/MatchingPipeline.cs#leaver-gate` | C |'
+'| #677 | T | 634 | `frontend/components/gwp/beheer/` | C |'
+'| #560 | T | 429 | `backend/Eiffel.Core/Pipeline/DirectorySynchronizer.cs` | C |'
+'| #673 | T | 429 | `frontend/components/gwp/cv/CvReview.tsx`, `frontend/app/(app)/consultant/[id]/page.tsx`, `frontend/lib/consultantDetail.ts`, `backend/Eiffel.Api/Endpoints/ProfileEndpoints.cs#read-model` | C |'
+'| #433 | I | 430,431,676,432,675,634,677,560,673 | `docs/wiki/` | - |'
+)
+sg_plan "${tmp}/sg-428.md" "${R428[@]}"
+sg_run "${tmp}/sg-428.md"
+[ "${code}" -eq 2 ] && [[ "${out}" == *"REFUSE 430 432 tracks A B file backend/Eiffel.Api/Services/JobService.cs"* ]] && [[ "${out}" == *"TRACK A+B 430 431 676 432 675"* ]] \
+  && pass "groups: 428 as written: A and B both claim JobService.cs, so the test refuses the split and merges them" || fail "groups: 428 as written" "${out}"
+R428F=("${R428[@]}")
+R428F[2]="${R428F[2]//JobService.cs\`/JobService.cs#load-easycv-order\`}"
+R428F[5]="${R428F[5]//JobService.cs\`/JobService.cs#load-placements-job\`}"
+sg_plan "${tmp}/sg-428f.md" "${R428F[@]}"
+sg_run "${tmp}/sg-428f.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"FOUNDATION 429 674"* && "${out}" == *"TRACK A 430 431 676"* && "${out}" == *"TRACK B 432 675"* && "${out}" == *"TRACK C 634 677 560 673"* && "${out}" == *"INTEGRATE 433"* && "${out}" == *"MODE parallel tracks=3 cap=3 start=3 queue=0"* ]] \
+  && pass "groups: 428 with regions: foundation 429 674, tracks A B C, 433 at integration" || fail "groups: 428 with regions" "${out}"
+R428U=(); for r in "${R428F[@]}"; do R428U+=("$(printf '%s' "${r}" | sed -E 's/\| [ABC] \|$/| - |/')"); done
+sg_plan "${tmp}/sg-428u.md" "${R428U[@]}"
+sg_run "${tmp}/sg-428u.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"MODE parallel tracks=6 cap=3 start=3 queue=3"* && "${out}" == *"JOIN 431 676 depends"* ]] \
+  && pass "groups: 428 without labels: six tracks, three start, three queue" || fail "groups: 428 without labels" "${out}"
+
+sg_plan "${tmp}/sg-same.md" '| 1 | T | - | `src/a.cs` | A |' '| 2 | T | - | `src/a.cs` | B |'
+sg_run "${tmp}/sg-same.md"
+[ "${code}" -eq 2 ] && [[ "${out}" == *"REFUSE 1 2 tracks A B file src/a.cs"* && "${out}" == *"MODE sequential tracks=1"* ]] \
+  && pass "groups: one file in two tracks is refused, one track remains" || fail "groups: one file in two tracks" "${out}"
+sg_plan "${tmp}/sg-diff.md" '| 1 | T | - | `src/a.cs` | A |' '| 2 | T | - | `src/b.cs` | B |'
+sg_run "${tmp}/sg-diff.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"MODE parallel tracks=2"* ]] && pass "groups: control: two files give two tracks" || fail "groups: two files" "${out}"
+sg_plan "${tmp}/sg-dir.md" '| 1 | T | - | `src/` | A |' '| 2 | T | - | `src/b.cs` | B |'
+sg_run "${tmp}/sg-dir.md"
+[ "${code}" -eq 2 ] && [[ "${out}" == *"REFUSE 1 2"* ]] && pass "groups: a folder claim covers a file claim inside it" || fail "groups: folder claim" "${out}"
+sg_plan "${tmp}/sg-pre.md" '| 1 | T | - | `src/a` | A |' '| 2 | T | - | `src/ab.cs` | B |'
+sg_run "${tmp}/sg-pre.md"
+[ "${code}" -eq 0 ] && pass "groups: control: src/a is no folder of src/ab.cs" || fail "groups: name prefix is not a folder" "${out}"
+sg_plan "${tmp}/sg-reg.md" '| 1 | T | - | `src/a.cs#top` | A |' '| 2 | T | - | `src/a.cs#bottom` | B |'
+sg_run "${tmp}/sg-reg.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"tracks=2"* ]] && pass "groups: two named regions of one file give two tracks" || fail "groups: region split" "${out}"
+sg_plan "${tmp}/sg-reg2.md" '| 1 | T | - | `src/a.cs#top` | A |' '| 2 | T | - | `src/a.cs` | B |'
+sg_run "${tmp}/sg-reg2.md"
+[ "${code}" -eq 2 ] && pass "groups: a whole-file claim refuses a region claim" || fail "groups: region and whole file" "${out}"
+sg_plan "${tmp}/sg-dep.md" '| 1 | T | - | `src/a.cs` | A |' '| 2 | T | 1 | `src/b.cs` | B |'
+sg_run "${tmp}/sg-dep.md"
+[ "${code}" -eq 2 ] && [[ "${out}" == *"REFUSE 1 2 tracks A B depends"* ]] && pass "groups: a dependency across two tracks is refused" || fail "groups: dependency across tracks" "${out}"
+sg_plan "${tmp}/sg-shared.md" '| 1 | T | - | `docs/wiki/Technical/Data-Model.md` | A |' '| 2 | T | - | `src/b.cs` | B |' '| 3 | T | 1 | `src/c.cs` | C |'
+sg_run "${tmp}/sg-shared.md"
+[ "${code}" -eq 2 ] && [[ "${out}" == *"MOVE 1 INTEGRATE shared docs/wiki/Technical/Data-Model.md"* && "${out}" == *"MOVE 3 INTEGRATE depends 1"* && "${out}" == *"INTEGRATE 1 3"* ]] \
+  && pass "groups: a track task on a shared file moves to integration, and so does its dependent" || fail "groups: shared file" "${out}"
+sg_plan "${tmp}/sg-mig.md" '| 1 | T | - | `backend/App/Data/Migrations/X.cs` | A |' '| 2 | T | - | `src/b.cs` | B |'
+sg_run "${tmp}/sg-mig.md"
+[[ "${out}" == *"MOVE 1 INTEGRATE shared"* ]] && pass "groups: a migration matches **/Migrations/**" || fail "groups: migration glob" "${out}"
+sg_plan "${tmp}/sg-wikidir.md" '| 1 | T | - | `docs/` | A |' '| 2 | T | - | `src/b.cs` | B |'
+sg_run "${tmp}/sg-wikidir.md"
+[[ "${out}" == *"MOVE 1 INTEGRATE shared docs"* ]] && pass "groups: a folder that holds a shared glob counts as shared" || fail "groups: folder above a shared glob" "${out}"
+printf '{"parallel":{"max":1}}\n' >"${tmp}/sg-off.json"
+out="$(STORY_CONFIG="${tmp}/sg-off.json" "${sg}" "${tmp}/sg-diff.md" 2>&1)"
+[[ "${out}" == *"MODE sequential tracks=2 reason=parallel.max=1"* ]] && pass "groups: cap 1: parallel is off" || fail "groups: cap 1" "${out}"
+out="$(STORY_CONFIG="${tmp}/sg-none.json" "${sg}" "${tmp}/sg-diff.md" 2>&1)"
+[[ "${out}" == *"reason=parallel.max=1"* ]] && pass "groups: no config: parallel is off" || fail "groups: no config" "${out}"
+
+sg_bad() { sg_run "$1"; [ "${code}" -eq 1 ] && [[ "${out}" == *"$2"* ]] && pass "groups: bad plan: $3" || fail "groups: bad plan: $3" "${out}"; }
+printf '# Plan\n\n## Order of work\n\n1. **#1 x.**\n' >"${tmp}/sg-notable.md"; sg_bad "${tmp}/sg-notable.md" "no claims table" "no table"
+sg_plan "${tmp}/sg-dup.md" '| 1 | T | - | `a` | A |' '| 1 | T | - | `b` | B |'; sg_bad "${tmp}/sg-dup.md" "appears twice" "duplicate task"
+sg_plan "${tmp}/sg-unk.md" '| 1 | T | 9 | `a` | A |'; sg_bad "${tmp}/sg-unk.md" "not in the claims table" "unknown dependency"
+sg_plan "${tmp}/sg-wave.md" '| 1 | X | - | `a` | A |'; sg_bad "${tmp}/sg-wave.md" "has wave 'X'" "unknown wave"
+sg_plan "${tmp}/sg-nofile.md" '| 1 | T | - | - | A |'; sg_bad "${tmp}/sg-nofile.md" "claims no file" "track task without files"
+sg_plan "${tmp}/sg-fdep.md" '| 1 | F | 2 | `a` | - |' '| 2 | T | - | `b` | A |'; sg_bad "${tmp}/sg-fdep.md" "foundation task 1 depends on 2" "foundation on a track"
+sg_plan "${tmp}/sg-fwd.md" '| 1 | T | 2 | `a` | A |' '| 2 | T | - | `b` | A |'; sg_bad "${tmp}/sg-fwd.md" "comes later in the table" "forward dependency"
+sg_plan "${tmp}/sg-fwd2.md" '| 1 | T | 2 | `a` | A |' '| 2 | T | - | `b` | B |'; sg_bad "${tmp}/sg-fwd2.md" "comes later in the table" "forward dependency across two labels"
+sg_plan "${tmp}/sg-t1.md" '| 1 | T | - | `a` | t1 |' '| 2 | T | - | `b` | - |'; sg_bad "${tmp}/sg-t1.md" "Labels t<digits> name the tracks without a label" "a label t1 is reserved"
+sg_plan "${tmp}/sg-t1f.md" '| 1 | F | - | `a` | t1 |' '| 2 | T | - | `b` | tA |'
+sg_run "${tmp}/sg-t1f.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"TRACK tA 2"* ]] && pass "groups: control: a label on a foundation row is dropped, and tA is no reserved label" || fail "groups: label t1 on a foundation row, or label tA" "${out}"
+grep -q '^| 1 | T | - | `x` | A |$' "${tmp}/sg-diff.md" && pass "groups: fixture: a claims-shaped table outside Order of work exists" || fail "groups: fixture"
+
+sgg="${tmp}/sg-git"
+mkdir -p "${sgg}/src" "${sgg}/docs/wiki"
+git -C "${sgg}" init -q && git -C "${sgg}" config user.email t@t && git -C "${sgg}" config user.name t
+echo 1 >"${sgg}/src/a.cs" && git -C "${sgg}" add . && git -C "${sgg}" commit -qm base && sg_base="$(git -C "${sgg}" rev-parse HEAD)"
+echo 2 >"${sgg}/src/a.cs" && echo w >"${sgg}/docs/wiki/x.md" && echo o >"${sgg}/other.txt" && git -C "${sgg}" add . && git -C "${sgg}" commit -qm work
+sg_plan "${tmp}/sg-scope.md" '| 1 | T | - | `src/` | A |' '| 2 | T | - | `lib/b.cs` | B |'
+out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
+[ "${code}" -eq 1 ] && [[ "${out}" == *"SHARED docs/wiki/x.md"* && "${out}" == *"OUTSIDE other.txt"* && "${out}" != *"src/a.cs"* ]] \
+  && pass "groups: scope: a changed shared file and an unclaimed file are listed, a claimed file is not" || fail "groups: scope" "${out}"
+git -C "${sgg}" rm -q docs/wiki/x.md other.txt && git -C "${sgg}" commit -qm undo
+out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
+[ "${code}" -eq 0 ] && [ "${out}" = "SCOPE ok" ] && pass "groups: scope: only claimed files changed" || fail "groups: scope ok" "${out}"
 
 # 6. syntax and shellcheck
 for f in "${hooks}"/*.sh "${repo}"/tests/*.sh; do
