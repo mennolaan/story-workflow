@@ -35,7 +35,7 @@ The orchestrator runs the independence test on this table at the plan gate, and 
 
 - Wave: F (foundation: what every track needs, run first on the story branch), T (track: independent work), I (integrate: shared and generated files, tasks that need two tracks).
 - Depends: `-` or the task ids. A dependency between two T tasks puts them in one track, in table order. "Must land in one commit" is a dependency.
-- Files: every file that the task edits, creates or deletes, tests and config included. A folder ends with `/`. No other globs. `-` for none (F and I only). `path#region` only for a split of one file that the phase text names.
+- Files: every file that the task edits, creates or deletes, tests and config included, as a path from the repo root (no leading `./` or `/`, no `..`). A folder ends with `/`. No other globs. `-` for none (F and I only). `path#region` only for a split of one file that the phase text names.
 - Track: a label for T rows, from `A-Za-z0-9._-`. Rows with one label share a session. A row without a label gets its own track. Labels of the form `t<digits>` are reserved. A track starts near 100k tokens, so bundle small tasks under one label, or put them in F or I.
 - Evidence: one short line per T row under the table: the `git grep` or `git ls-tree` result that shows the named files hold what the task changes, and the callers you checked.
 

@@ -39,8 +39,10 @@
 #                    repo root.
 # Exit 1 with the reason on a bad plan: no table, a duplicate task, an unknown
 # dependency, an unknown wave, a T task without files, a reserved label, a
-# dependency that points forward in the same group, or a foundation task that
-# depends on a track or integrate task. Bash 3.2 compatible (the macOS /bin/bash).
+# claim that is not a plain path from the repo root (a leading ./ or /, a . or
+# .. segment, or //), a dependency that points forward in the same group, or a
+# foundation task that depends on a track or integrate task. --scope refuses
+# such a claim too. Bash 3.2 compatible (the macOS /bin/bash).
 set -uo pipefail
 # A claim such as consultant/[id]/page.tsx must stay a word, not a glob.
 set -f
@@ -94,6 +96,15 @@ claim_path() {
   printf '%s' "${p}"
 }
 claim_region() { case "$1" in *"#"*) printf '%s' "${1#*#}" ;; esac; }
+
+# claim_bad <claim>: exit 0 when the path of the claim is not a plain path from
+# the repo root. Two spellings of one file would pass the overlap test.
+claim_bad() {
+  local p="${1%%#*}"
+  case "/${p%/}/" in *//*|*/./*|*/../*) return 0 ;; esac
+  return 1
+}
+claim_rule="Write the path from the repo root, with no leading ./ or /, no . or .. segment and no //."
 
 # overlap <claimA> <claimB>: exit 0 when the claims touch the same file.
 overlap() {
@@ -153,6 +164,9 @@ if [ "${1:-}" = "--scope" ]; then
   [ -f "${plan}" ] && [ -n "${tasks}" ] && [ -n "${base}" ] || die "usage: story-groups.sh --scope <plan file> <task,task,...> <base> [<head>]"
   claims="$(plan_claims "${plan}" "${tasks//#/}")"
   [ -n "${claims}" ] || die "the plan has no claim for tasks ${tasks}."
+  while IFS= read -r c; do
+    if claim_bad "${c}"; then die "the plan claims '${c}'. ${claim_rule}"; fi
+  done <<<"${claims}"
   files="$(git diff --name-only "${base}..${head}" 2>&1)" || die "git diff ${base}..${head} failed: ${files}"
   bad=0
   while IFS= read -r file; do
@@ -187,6 +201,11 @@ while IFS=$'\t' read -r t w d f l; do
   [ -n "${d}" ] || d="-"
   [ -n "${f}" ] || die "task ${t} has an empty Files cell. Write - when it touches no file."
   if [ "${w}" = T ] && [ "${f}" = "-" ]; then die "task ${t} is wave T and claims no file. A track task must name its files."; fi
+  if [ "${f}" != "-" ]; then
+    for c in ${f//,/ }; do
+      if claim_bad "${c}"; then die "task ${t} claims '${c}'. ${claim_rule}"; fi
+    done
+  fi
   [[ "${l}" =~ ^[A-Za-z0-9._-]*$ ]] || die "task ${t} has track label '${l}'. Use A-Z a-z 0-9 . _ - only."
   [ "${w}" = T ] || l=""
   [[ "${l}" =~ ^t[0-9]+$ ]] && die "task ${t} has track label '${l}'. Labels t<digits> name the tracks without a label. Pick another label."

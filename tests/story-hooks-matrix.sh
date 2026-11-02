@@ -1380,6 +1380,13 @@ sg_plan "${tmp}/sg-fdep.md" '| 1 | F | 2 | `a` | - |' '| 2 | T | - | `b` | A |';
 sg_plan "${tmp}/sg-fwd.md" '| 1 | T | 2 | `a` | A |' '| 2 | T | - | `b` | A |'; sg_bad "${tmp}/sg-fwd.md" "comes later in the table" "forward dependency"
 sg_plan "${tmp}/sg-fwd2.md" '| 1 | T | 2 | `a` | A |' '| 2 | T | - | `b` | B |'; sg_bad "${tmp}/sg-fwd2.md" "comes later in the table" "forward dependency across two labels"
 sg_plan "${tmp}/sg-t1.md" '| 1 | T | - | `a` | t1 |' '| 2 | T | - | `b` | - |'; sg_bad "${tmp}/sg-t1.md" "Labels t<digits> name the tracks without a label" "a label t1 is reserved"
+for c in './src/a.cs' '/src/a.cs' 'src/../a.cs' 'src//a.cs' 'src/./a.cs' './'; do
+  sg_plan "${tmp}/sg-path.md" '| 1 | T | - | `src/a.cs` | A |' "| 2 | T | - | \`${c}\` | B |"
+  sg_bad "${tmp}/sg-path.md" "task 2 claims '${c}'. Write the path from the repo root" "the claim ${c} is refused"
+done
+sg_plan "${tmp}/sg-pathok.md" '| 1 | T | - | `src/..x/a.cs` | A |' '| 2 | T | - | `src/b.cs#r.1` | B |'
+sg_run "${tmp}/sg-pathok.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"tracks=2"* ]] && pass "groups: control: src/..x/a.cs and a region with a dot are plain paths" || fail "groups: a plain path was refused" "${out}"
 sg_plan "${tmp}/sg-t1f.md" '| 1 | F | - | `a` | t1 |' '| 2 | T | - | `b` | tA |'
 sg_run "${tmp}/sg-t1f.md"
 [ "${code}" -eq 0 ] && [[ "${out}" == *"TRACK tA 2"* ]] && pass "groups: control: a label on a foundation row is dropped, and tA is no reserved label" || fail "groups: label t1 on a foundation row, or label tA" "${out}"
@@ -1399,6 +1406,9 @@ echo l >"${sgg}/package-lock.json" && git -C "${sgg}" add . && git -C "${sgg}" c
 out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
 [ "${code}" -eq 1 ] && [[ "${out}" == *"SHARED package-lock.json"* ]] && pass "groups: scope: a changed root lockfile is listed as SHARED" || fail "groups: scope of a root lockfile" "${out}"
 git -C "${sgg}" rm -q package-lock.json && git -C "${sgg}" commit -qm unlock
+sg_plan "${tmp}/sg-scopedot.md" '| 1 | T | - | `./src/` | A |'
+out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scopedot.md" 1 "${sg_base}" 2>&1)"; code=$?
+[ "${code}" -eq 1 ] && [[ "${out}" == *"the plan claims './src/'. Write the path from the repo root"* ]] && pass "groups: scope refuses a claim with a leading ./" || fail "groups: scope with a ./ claim" "${out}"
 out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
 [ "${code}" -eq 0 ] && [ "${out}" = "SCOPE ok" ] && pass "groups: scope: only claimed files changed" || fail "groups: scope ok" "${out}"
 
