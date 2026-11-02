@@ -37,7 +37,7 @@ One phase per turn, in this order. One board task per phase.
 - **Standing authority.** Implement the tasks of your track. Apply the fixes and answers the orchestrator relays. Keep your status file current. Nothing else.
 - **Status file.** Your status is `{{PLANS}}/{{SLUG}}.d/status-{{TRACK}}.md`. Write the whole file each time, with a quoted heredoc in one Bash command (`cat > "<path>" <<'STATUS_EOF'`). Never edit the plan file: other sessions write it. The story-branch session copies your status file into `## Implementation status` at the merge.
 - **Plan changes.** If the plan is wrong, say so in a `QUESTION`. Do not redesign silently. Write deviations into your status file.
-- **Scope check.** Before each report, run `"{{PLUGIN}}/hooks/story-groups.sh" --scope {{PLANS}}/{{SLUG}}.md {{TRACK_TASKS}} <base sha>`. It must print `SCOPE ok`. An `OUTSIDE` or `SHARED` line is a deviation: undo the change or ask in a `QUESTION`.
+- **Scope check.** Before each report, run `"{{PLUGIN}}/hooks/story-groups.sh" --scope "{{PLANS}}/{{SLUG}}.md" {{TRACK_TASKS}} <base sha>`. It must print `SCOPE ok`. An `OUTSIDE` or `SHARED` line is a deviation: undo the change or ask in a `QUESTION`.
 - **Phased turns.** Do one phase of `## Phases` per turn.
   - Commit the phase. Update your status file. Run the scope check.
   - End the turn with recap first line `PHASE DONE #<task> <short sha>`.

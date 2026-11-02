@@ -1407,7 +1407,7 @@ tb="${story}/briefs/implement-track.md"
 track_brief_bad() { # track_brief_bad <brief>: prints each track rule the brief lacks
   local f="$1" want
   for want in 'story-bind.sh" implement {{SLUG}} --track {{TRACK}} --parent {{ORCHESTRATOR_ID}}' 'git switch -c {{TRACK_BRANCH}} <base sha>' \
-    'Never rebase it onto `origin/{{BASE}}`' 'apply to `{{BRANCH}}`, not to this branch' 'story-groups.sh" --scope {{PLANS}}/{{SLUG}}.md {{TRACK_TASKS}} <base sha>' \
+    'Never rebase it onto `origin/{{BASE}}`' 'apply to `{{BRANCH}}`, not to this branch' 'story-groups.sh" --scope "{{PLANS}}/{{SLUG}}.md" {{TRACK_TASKS}} <base sha>' \
     'status-{{TRACK}}.md' 'DONE {{TRACK_BRANCH}} <short sha>' 'When it is `pending`'; do
     grep -qF -- "${want}" "${f}" || printf 'missing: %s\n' "${want}"
   done
@@ -1424,7 +1424,7 @@ grep -v -- '--track {{TRACK}}' "${tb}" >"${tmp}/no-track.md"
 [[ "$(track_brief_bad "${tmp}/track-review.md")" == *"runs a review placeholder"* ]] && pass "parallel: a track brief that runs a review panel fails" || fail "parallel: a track brief with a review panel passed"
 parallel_skill_bad() { # parallel_skill_bad <SKILL.md>: prints each part of the parallel procedure that /story lacks
   local f="$1" want
-  for want in '## Parallel tracks' 'hooks/story-groups.sh" <plan path>' 'story-groups.sh" --scope' 'briefs/implement-track.md' '"Start N tracks in parallel, or one session?"' \
+  for want in '## Parallel tracks' 'hooks/story-groups.sh" "<plan path>"' 'story-groups.sh" --scope' 'briefs/implement-track.md' '"Start N tracks in parallel, or one session?"' \
     'next: #{{STORY_ID}} merge' 'DONE <track branch> <sha>' 'Do not archive a track before the story PR is open' '`<slug>.d/status-<track>.md`' \
     'Track `PHASE DONE #<task> -`: the track has bound and waits for its base' 'Story-branch `PHASE DONE #{{STORY_ID}} -`: it has bound and waits for the merge' \
     'Every other story-branch `PHASE DONE #<task> <sha>`'; do
@@ -1434,14 +1434,14 @@ parallel_skill_bad() { # parallel_skill_bad <SKILL.md>: prints each part of the 
 }
 o="$(parallel_skill_bad "${story}/SKILL.md")"
 [ -z "${o}" ] && pass "parallel: /story names story-groups.sh, the gate question, the scope check, the merge go and the track DONE row" || fail "parallel: /story lacks a part of the parallel procedure" "${o}"
-grep -v 'story-groups.sh" <plan path>' "${story}/SKILL.md" >"${tmp}/no-groups.md"
+grep -v 'story-groups.sh" "<plan path>"' "${story}/SKILL.md" >"${tmp}/no-groups.md"
 [ -n "$(parallel_skill_bad "${tmp}/no-groups.md")" ] && pass "parallel: a /story without the story-groups.sh gate fails" || fail "parallel: a /story without story-groups.sh passed"
 grep -v 'waits for its base' "${story}/SKILL.md" >"${tmp}/no-wait.md"
 [[ "$(parallel_skill_bad "${tmp}/no-wait.md")" == *"waits for its base"* ]] && pass "parallel: a /story whose scheduler has no handler for a waiting track fails" || fail "parallel: a scheduler without the waiting-track handler passed"
 for want in 'git cherry-pick <base sha>..<track branch>' 'git cherry-pick --abort' 'next: #{{STORY_ID}} merge' 'status-<track>.md'; do
   grep -qF -- "${want}" "${story}/briefs/implement.md" && pass "parallel: the implement brief holds the merge step '${want}'" || fail "parallel: the implement brief lacks '${want}'"
 done
-for want in '| Task | Wave | Depends | Files | Track |' 'hooks/story-groups.sh" {{PLANS}}/{{SLUG}}.md' 'Check the claims table against the repo'; do
+for want in '| Task | Wave | Depends | Files | Track |' 'hooks/story-groups.sh" "{{PLANS}}/{{SLUG}}.md"' 'Check the claims table against the repo'; do
   grep -qF -- "${want}" "${story}/briefs/plan.md" && pass "parallel: the plan brief holds '${want}'" || fail "parallel: the plan brief lacks '${want}'"
 done
 awk '/^```$/ { n++; next } n == 1' "${story}/briefs/plan.md" >"${tmp}/example-rows.md"
@@ -1451,6 +1451,14 @@ sg_run "${tmp}/example-plan.md"
   && pass "parallel: the example claims table of the plan brief passes story-groups.sh with two tracks" || fail "parallel: the example claims table" "${out}"
 grep -q '^## Tracks$' "${story}/ledger.md" && grep -qF '| Track | Tasks | Branch | Session (name, id) | State | Last sha |' "${story}/ledger.md" \
   && pass "parallel: the ledger has a Tracks section" || fail "parallel: the ledger has no Tracks section"
+unquoted_plan_path() { # unquoted_plan_path <file>...: prints each story-groups.sh command whose plan path has no quotes
+  grep -n -H -E 'story-groups\.sh" (--scope )?(\{\{PLANS\}\}|<plan path>)' "$@"
+  return 0
+}
+o="$(unquoted_plan_path "${story}/SKILL.md" "${story}"/briefs/*.md)"
+[ -z "${o}" ] && pass "parallel: every story-groups.sh command quotes the plan path, which can hold spaces" || fail "parallel: an unquoted plan path" "${o}"
+printf 'Run `"{{PLUGIN}}/hooks/story-groups.sh" --scope {{PLANS}}/{{SLUG}}.md 1 abc`.\n' >"${tmp}/unquoted.md"
+[ -n "$(unquoted_plan_path "${tmp}/unquoted.md")" ] && pass "parallel: an unquoted plan path fails" || fail "parallel: an unquoted plan path passed"
 example_parallel_ok() { jq -e '(.parallel.max | type == "number" and . >= 1 and floor == .) and (.parallel.shared | type == "array" and all(type == "string"))' "$1" >/dev/null 2>&1; }
 example_parallel_ok "${story}/story.example.json" && pass "parallel: story.example.json sets parallel.max and parallel.shared" || fail "parallel: story.example.json lacks parallel.max or parallel.shared"
 jq 'del(.parallel)' "${story}/story.example.json" >"${tmp}/no-parallel.json"

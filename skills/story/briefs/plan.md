@@ -11,7 +11,7 @@ One phase per turn, in this order. One board task per phase.
 1. `#{{PLAN_TASK}}` Draft.
    - Write the plan to `{{PLANS}}/{{SLUG}}.md`. Use that absolute path. List each decision the user must make under `## Open decisions`, or write "none".
    - Write the claims table first under `## Order of work`, then the phases (one per task, each with `Done when:`). See "Claims table".
-   - Run `"{{PLUGIN}}/hooks/story-groups.sh" {{PLANS}}/{{SLUG}}.md` and paste its output under the table. On exit 1, fix the table. On exit 2, fix the claims, or accept the safe grouping that it prints and say so in the text.
+   - Run `"{{PLUGIN}}/hooks/story-groups.sh" "{{PLANS}}/{{SLUG}}.md"` and paste its output under the table. On exit 1, fix the table. On exit 2, fix the claims, or accept the safe grouping that it prints and say so in the text.
    - Verify every upstream fact against a live source and date it. Follow the research rules of the repo's {{CONVENTIONS}}.
    - End the turn with recap first line `PHASE DONE #{{PLAN_TASK}} -`.
 2. `#{{PLAN_TASK}}` Review.
