@@ -1357,6 +1357,10 @@ sg_run "${tmp}/sg-shared.md"
 sg_plan "${tmp}/sg-mig.md" '| 1 | T | - | `backend/App/Data/Migrations/X.cs` | A |' '| 2 | T | - | `src/b.cs` | B |'
 sg_run "${tmp}/sg-mig.md"
 [[ "${out}" == *"MOVE 1 INTEGRATE shared"* ]] && pass "groups: a migration matches **/Migrations/**" || fail "groups: migration glob" "${out}"
+sg_plan "${tmp}/sg-rootlock.md" '| 1 | T | - | `package-lock.json` | A |' '| 2 | T | - | `src/b.cs` | B |' '| 3 | T | - | `Migrations/X.cs` | C |' '| 4 | T | - | `xpackage-lock.json` | D |'
+sg_run "${tmp}/sg-rootlock.md"
+[ "${code}" -eq 2 ] && [[ "${out}" == *"MOVE 1 INTEGRATE shared package-lock.json"* && "${out}" == *"MOVE 3 INTEGRATE shared Migrations/X.cs"* && "${out}" == *"TRACK D 4"* && "${out}" != *"MOVE 4 "* ]] \
+  && pass "groups: a glob **/x also matches x at the repo root, and xpackage-lock.json is no lockfile" || fail "groups: root match of a **/ glob" "${out}"
 sg_plan "${tmp}/sg-wikidir.md" '| 1 | T | - | `docs/` | A |' '| 2 | T | - | `src/b.cs` | B |'
 sg_run "${tmp}/sg-wikidir.md"
 [[ "${out}" == *"MOVE 1 INTEGRATE shared docs"* ]] && pass "groups: a folder that holds a shared glob counts as shared" || fail "groups: folder above a shared glob" "${out}"
@@ -1391,6 +1395,10 @@ out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/
 [ "${code}" -eq 1 ] && [[ "${out}" == *"SHARED docs/wiki/x.md"* && "${out}" == *"OUTSIDE other.txt"* && "${out}" != *"src/a.cs"* ]] \
   && pass "groups: scope: a changed shared file and an unclaimed file are listed, a claimed file is not" || fail "groups: scope" "${out}"
 git -C "${sgg}" rm -q docs/wiki/x.md other.txt && git -C "${sgg}" commit -qm undo
+echo l >"${sgg}/package-lock.json" && git -C "${sgg}" add . && git -C "${sgg}" commit -qm lock
+out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
+[ "${code}" -eq 1 ] && [[ "${out}" == *"SHARED package-lock.json"* ]] && pass "groups: scope: a changed root lockfile is listed as SHARED" || fail "groups: scope of a root lockfile" "${out}"
+git -C "${sgg}" rm -q package-lock.json && git -C "${sgg}" commit -qm unlock
 out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
 [ "${code}" -eq 0 ] && [ "${out}" = "SCOPE ok" ] && pass "groups: scope: only claimed files changed" || fail "groups: scope ok" "${out}"
 

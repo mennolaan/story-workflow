@@ -35,7 +35,8 @@
 #   parallel.max     cap on parallel tracks. Default 1 (off).
 #   parallel.shared  globs of shared or generated files. A track candidate that
 #                    claims one moves to INTEGRATE. Matched with shell case rules,
-#                    where * also matches /.
+#                    where * also matches /. A glob **/x also matches x at the
+#                    repo root.
 # Exit 1 with the reason on a bad plan: no table, a duplicate task, an unknown
 # dependency, an unknown wave, a T task without files, a reserved label, a
 # dependency that points forward in the same group, or a foundation task that
@@ -109,20 +110,30 @@ overlap() {
   return 1
 }
 
-# is_shared <path>: exit 0 when the path matches a shared glob.
+# shared_glob <path> <glob>: exit 0 when the path, or the folder of that path,
+# matches the glob, or the path is a folder above the glob.
+shared_glob() {
+  local p="$1" g="$2" gp
+  # shellcheck disable=SC2254 # the glob is data on purpose
+  case "${p}" in ${g}) return 0 ;; esac
+  # shellcheck disable=SC2254
+  case "${p}/" in ${g}) return 0 ;; esac
+  gp="${g%%[\*\?]*}"
+  if [ -n "${gp}" ]; then
+    case "${gp}" in "${p}"/*|"${p}") return 0 ;; esac
+  fi
+  return 1
+}
+
+# is_shared <path>: exit 0 when the path matches a shared glob. A case pattern
+# **/x needs a / before x, so a glob **/x also matches as x, at the root.
 is_shared() {
-  local g gp p="$1"
+  local g p="$1"
   [ -n "${shared}" ] || return 1
   while IFS= read -r g; do
     [ -n "${g}" ] || continue
-    # shellcheck disable=SC2254 # the glob is data on purpose
-    case "${p}" in ${g}) return 0 ;; esac
-    # shellcheck disable=SC2254
-    case "${p}/" in ${g}) return 0 ;; esac
-    gp="${g%%[\*\?]*}"
-    if [ -n "${gp}" ]; then
-      case "${gp}" in "${p}"/*|"${p}") return 0 ;; esac
-    fi
+    shared_glob "${p}" "${g}" && return 0
+    case "${g}" in '**/'?*) shared_glob "${p}" "${g#\*\*/}" && return 0 ;; esac
   done <<<"${shared}"
   return 1
 }
