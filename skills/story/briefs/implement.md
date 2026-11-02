@@ -19,6 +19,20 @@ You are the IMPLEMENT session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks
 One phase per turn, in this order. One board task per phase.
 {{PHASES}}
 
+## Parallel mode
+Only when the orchestrator runs the story in parallel tracks (`{{PLUGIN}}/skills/story/SKILL.md`, "Parallel tracks"). You are then the story-branch session. Track sessions run the track tasks on their own local branches at the same time.
+- You own `{{BRANCH}}`, every shared file and `## Implementation status`. A track never writes them.
+- Your phases are the foundation tasks, then `#{{STORY_ID}} Merge the tracks`, then the integrate tasks, then the review.
+- Without foundation tasks, your first turn only does the first steps above, and ends with recap first line `PHASE DONE #{{STORY_ID}} -`. Then wait for `next: #{{STORY_ID}} merge`.
+- The merge phase, when the orchestrator sends `next: #{{STORY_ID}} merge`:
+  - Read the tracks, their branches and the base sha from `## Tracks` in `{{PLANS}}/{{SLUG}}.d/ledger.md`.
+  - For each track, in ledger order: `git cherry-pick <base sha>..<track branch>`.
+  - On a conflict: `git cherry-pick --abort`. End the turn with recap first line `BLOCKED`, the track and the paths. A conflict means a claim was wrong, so the orchestrator decides. Never guess a resolution.
+  - Copy each `{{PLANS}}/{{SLUG}}.d/status-<track>.md` into `## Implementation status`.
+  - Run the full verification of the repo's {{CONVENTIONS}} on the merged branch.
+  - End the turn with recap first line `PHASE DONE #{{STORY_ID}} <short sha>`.
+- Never push a track branch, and never rebase or switch one: its worktree holds it.
+
 ## Rules for this session
 - **You never ask the user.**
   - Do not call `AskUserQuestion`.

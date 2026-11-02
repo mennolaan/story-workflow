@@ -11,12 +11,21 @@ The orchestrator is the only writer. Newest entries first in each section.
 
 ## Phase
 
-plan | plan gate | implement | docket | push | pr-review | done
+plan | plan gate | implement | tracks | merge | docket | push | pr-review | done
+
+Mode: sequential | parallel (the user's words at the gate)
 
 ## Linked sessions
 
 | Name | Id | Role | State | Started (UTC) |
 |---|---|---|---|---|
+
+## Tracks
+
+Parallel mode only. One row per `TRACK` line of `story-groups.sh`, in its order, which is the merge order. Base sha: <the sha the track branches start from>
+
+| Track | Tasks | Branch | Session (name, id) | State | Last sha |
+|---|---|---|---|---|---|
 
 ## Decisions (the user's own words)
 

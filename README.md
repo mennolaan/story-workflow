@@ -75,6 +75,8 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `guard.denyTools` | Extra MCP tool names, as Perl regexes. A regex must match the whole tool name, for example `mcp__github__.*`. The role guard denies a child session every call to a tool that matches one. |
 | `planBoundary` | `true` turns on the plan-boundary reminder and its stamp hook. Default `false`. |
 | `conventions` | The file that holds the conventions and checks of the repo. The briefs send each session to it. Default `CLAUDE.md`. |
+| `parallel.max` | The most track sessions that run at once after the plan gate. Default 1, which keeps one implement session. With 2 or more, `/story` asks you once when the plan has two or more independent tracks. |
+| `parallel.shared` | Globs of shared or generated files, for example lockfiles. A track task that claims one moves to the story-branch session. `*` also matches `/`. Default none. |
 
 The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. The orchestrator runs `story-bind.sh --adopt <child id>` after it starts a child, and only then does `clear_session` of that child run without a prompt: the guard also checks that the child's binding names the orchestrator as parent and carries its own file key. It also denies a child these MCP tools: `mcp__ccd_pr__*` except `get_status`, `start_session`, `move_to_cloud`, `clear_session`, the session tools that archive, delete, stop, detach, message or reconfigure a session, `set_session_title` for any session but its own, and the host tools that sync or clean up worktrees. `mcp__ccd_turn__*` and read-only tools stay open. Only the orchestrator acts outward.
 
@@ -103,6 +105,8 @@ claude plugin test .
 ```
 
 The matrix exits 0 when every case passes. Each gate has a case that fails without the gate.
+
+`hooks/story-groups.sh <plan>` prints the tracks of a plan's claims table, as the orchestrator sees them at the plan gate.
 
 ## Known limits
 

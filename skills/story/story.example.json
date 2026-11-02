@@ -7,5 +7,6 @@
   "pr": { "create": "gh pr create --draft --base {base} --head {branch} --title {title} --body {description}" },
   "guard": { "deny": [], "denyTools": [] },
   "planBoundary": false,
+  "parallel": { "max": 3, "shared": ["**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "CHANGELOG.md"] },
   "conventions": "CLAUDE.md"
 }
