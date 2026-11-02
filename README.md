@@ -12,6 +12,8 @@ The plugin holds:
 
 The plugin does nothing in a repo without `.claude/story.json`. Install it once, then turn it on per repo.
 
+This marketplace also holds the `review-panel` plugin (`plugins/review-panel/`): code and plan review with Codex or Grok as the finder and the main thread as the judge. `/story` can use it as its review command. See [plugins/review-panel/README.md](plugins/review-panel/README.md).
+
 ## Requirements
 
 - The Claude desktop app (Code tab) for `/story`. The orchestrator starts, resets and renames its sessions with the session tools of the app. One bound session also works in the terminal CLI.

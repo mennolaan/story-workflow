@@ -596,7 +596,8 @@ grep -q 'story-bind.sh\" --adopt <child id>' "${story}/SKILL.md" \
 grep -q '^## Phased turns and steering$' "${story}/SKILL.md" && grep -q 'stop_session' "${story}/SKILL.md" \
   && pass "phases: /story carries the phased-turn rules" || fail "phases: /story has no phased-turn rules"
 
-# 4h. repo facts come from .claude/story.json, never from the plugin text
+# 4h. repo facts come from .claude/story.json, never from the plugin text.
+# marketplace.json is out of scope: it lists the review-panel plugin of this repo by path.
 placeholders_missing() { # placeholders_missing <map file> <file>...: prints each {{X}} a file uses that the map does not document
   local map="$1"; shift
   grep -ho '{{[A-Z_]*}}' "$@" | sort -u | while IFS= read -r x; do grep -qF "\`${x}\`" "${map}" || printf 'undocumented %s\n' "${x}"; done
@@ -625,7 +626,7 @@ for f in "${story}"/briefs/*.md; do
 done
 repo_facts() { grep -n -i -E 'tme-lean|dev\.azure\.com|origin/development|az repos pr create|eiffel|/review-panel|/review-grok|feature/<id>' "$@"; }
 o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/story.example.json" "${repo}/skills/checkpoint/SKILL.md" \
-  "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin"/*.json "${repo}"/agents/*.md)"
+  "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin/plugin.json" "${repo}"/agents/*.md)"
 [ -z "${o}" ] && pass "repo facts: no skill, brief, example config, hook, mod or mod test names the facts of one repo" || fail "repo facts: found" "${o}"
 jq -e '(.review | not) and (.board.show | type == "string") and (.pr.create | type == "string") and (.baseBranch | type == "string") and (.branch | type == "string") and (.backstopTokens | type == "number") and (.guard.deny | type == "array")' \
   "${story}/story.example.json" >/dev/null && pass "example: story.example.json is valid, sets every key a repo needs and has no review block" \

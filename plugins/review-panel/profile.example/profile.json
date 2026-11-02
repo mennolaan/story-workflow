@@ -1,0 +1,8 @@
+{
+  "name": "acme-orders",
+  "baseRef": "origin/main",
+  "prHost": "github",
+  "harnessPaths": [".github/workflows/"],
+  "deepHeads": ["delivery", "dependency", "identity", "parity", "situate", "reach", "falsify"],
+  "planHeads": ["delivery", "conform", "situate"]
+}

@@ -3,12 +3,17 @@
   "owner": {
     "name": "Menno Laan"
   },
-  "description": "The story-workflow plugin: /story, /checkpoint, the story hooks and the context-keeper mod.",
+  "description": "The story-workflow plugin (/story, /checkpoint, the story hooks and the context-keeper mod) and the review-panel plugin (Codex or Grok review, judged by the main thread).",
   "plugins": [
     {
       "name": "story-workflow",
       "source": "./",
       "description": "Run a board story through one orchestrator session and handoff sessions for plan, implement and PR review."
+    },
+    {
+      "name": "review-panel",
+      "source": "./plugins/review-panel",
+      "description": "Pre-PR, PR and plan review: Codex or Grok finds, the main thread judges. Per-repo rules in .claude/review-profile/."
     }
   ]
 }

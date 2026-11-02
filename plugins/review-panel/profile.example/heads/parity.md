@@ -1,0 +1,1 @@
+Siblings to read in full: the other handlers in `src/handlers/`, their schemas in `src/schemas/`, and their tests in `test/handlers/`. Every handler validates its body with its schema before it reads a field.

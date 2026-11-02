@@ -1,0 +1,8 @@
+{
+  "name": "review-panel",
+  "version": "0.1.0",
+  "description": "Pre-PR, PR and plan review: Codex (or Grok) finds, the main thread judges every finding against the repo and a dated fact sheet. A repo adds its own rules with .claude/review-profile/.",
+  "author": {
+    "name": "Menno Laan"
+  }
+}
