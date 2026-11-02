@@ -71,6 +71,10 @@ story_config() {
 
 story_clean() { printf '%s' "$1" | tr -cd 'A-Za-z0-9._-'; }
 
+# story_clean_track <key>: a track key keeps +, which joins the labels of a
+# merged track (story-groups.sh).
+story_clean_track() { printf '%s' "$1" | tr -cd 'A-Za-z0-9._+-'; }
+
 # story_keys <hook input json>: the candidate binding keys, host id first.
 story_keys() {
   local host sid
@@ -108,15 +112,17 @@ story_is_child() {
 }
 
 # story_state_file <hook input json>: the checkpoint path of this session.
-# Bound: <plans>/<slug>.d/<role>.md. Unbound: <plans>/.sessions/<key>.md.
+# Bound: <plans>/<slug>.d/<role>.md, or <plans>/<slug>.d/<role>-<track>.md for
+# a track session. Unbound: <plans>/.sessions/<key>.md.
 story_state_file() {
-  local dir b role slug
+  local dir b role slug track
   dir="$(story_plans_dir)" || return 1
   b="$(story_binding "$1")"
   if [ -n "${b}" ]; then
     role="$(story_field "${b}" role)"
     slug="$(story_field "${b}" slug)"
-    printf '%s/%s.d/%s.md\n' "${dir}" "${slug}" "${role}"
+    track="$(story_clean_track "$(story_field "${b}" track)")"
+    printf '%s/%s.d/%s%s.md\n' "${dir}" "${slug}" "${role}" "${track:+-${track}}"
   else
     printf '%s/.sessions/%s.md\n' "${dir}" "$(story_key "$1")"
   fi
@@ -174,11 +180,11 @@ story_is_fresh() {
   [ "$(story_mtime "$1")" -ge "${2:-0}" ]
 }
 
-# story_card <role> <slug> <parent> <plan path>: the role card that re-primes a
-# session. The plan review command is review.plan of the config, with {plan}
-# filled in.
+# story_card <role> <slug> <parent> <plan path> [<track>]: the role card that
+# re-primes a session. The plan review command is review.plan of the config,
+# with {plan} filled in.
 story_card() {
-  local role="$1" slug="$2" parent="${3:-unknown}" plan="${4:-the plan}" review
+  local role="$1" slug="$2" parent="${3:-unknown}" plan="${4:-the plan}" track="${5:-}" review
   case "${role}" in
     orchestrator)
       printf 'You are the ORCHESTRATOR of story %s. You alone ask the user and act outward (board, push, PR, cloud, pipelines, paid runs). Read digests, not diffs. Keep the ledger current.\n' "${slug}" ;;
@@ -191,7 +197,11 @@ story_card() {
       fi
       printf 'You are the PLAN session of story %s. You never ask the user. You own the plan file. %s, then report PLAN READY. Your orchestrator is %s.\n' "${slug}" "${review}" "${parent}" ;;
     implement)
-      printf 'You are the IMPLEMENT session of story %s. You never ask the user and never push. You own the code, local commits and "## Implementation status" in the plan. Your orchestrator is %s.\n' "${slug}" "${parent}" ;;
+      if [ -n "${track}" ]; then
+        printf 'You are the IMPLEMENT session of track %s of story %s. You never ask the user and never push. You own the tasks of your track, local commits on your track branch and %s.d/status-%s.md. You never touch the story branch, a shared file or "## Implementation status" in the plan. Your last phase ends with DONE <track branch> <sha>. Your orchestrator is %s.\n' "${track}" "${slug}" "${slug}" "${track}" "${parent}"
+      else
+        printf 'You are the IMPLEMENT session of story %s. You never ask the user and never push. You own the code, local commits and "## Implementation status" in the plan. Your orchestrator is %s.\n' "${slug}" "${parent}"
+      fi ;;
     pr-review)
       printf 'You are the PR-REVIEW session of story %s. You never ask the user and never post. You own the pr-review file. Your orchestrator is %s.\n' "${slug}" "${parent}" ;;
   esac

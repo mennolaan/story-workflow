@@ -792,6 +792,60 @@ o="$(sbx CLAUDE_CODE_SESSION_ID=k-bound -- implement story-k --parent k-orch 2>&
 o="$(sbx CLAUDE_CODE_HOST_SESSION_ID=local_hk CLAUDE_CODE_SESSION_ID=uuid-hk -- implement story-k --parent k-orch 2>&1)"
 [ "$(jq -r '.key + "/" + .session_id' "${plans}/.sessions/local_hk.json")" = local_hk/uuid-hk ] && pass "story-bind: with a host id the key is the host id and session_id stays the Claude Code id" || fail "story-bind: key and session_id" "$(cat "${plans}/.sessions/local_hk.json")"
 
+# story-bind --track: one state file per track of a parallel story
+o="$(sbx CLAUDE_CODE_SESSION_ID=tr-a -- implement story-t --track A --parent t-orch 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && [ "$(jq -r '.role + "/" + .track + "/" + .parent' "${plans}/.sessions/tr-a.json" 2>/dev/null)" = implement/A/t-orch ] \
+  && [[ "${o}" == *"State: ${plans}/story-t.d/implement-A.md"* && "${o}" == *"Status: ${plans}/story-t.d/status-A.md"* ]] \
+  && pass "track: --track writes track into the binding and names the track state and status files" || fail "track: --track binding (exit ${c})" "${o}"
+sbx CLAUDE_CODE_SESSION_ID=tr-b -- implement story-t --parent t-orch --track B >/dev/null 2>&1
+sbx CLAUDE_CODE_SESSION_ID=tr-s -- implement story-t --parent t-orch >/dev/null 2>&1
+sa="$(sbx CLAUDE_CODE_SESSION_ID=tr-a -- --state)"; sb="$(sbx CLAUDE_CODE_SESSION_ID=tr-b -- --state)"; ss="$(sbx CLAUDE_CODE_SESSION_ID=tr-s -- --state)"
+[ "${sa}" = "${plans}/story-t.d/implement-A.md" ] && [ "${sb}" = "${plans}/story-t.d/implement-B.md" ] && [ "${ss}" = "${plans}/story-t.d/implement.md" ] \
+  && pass "track: two tracks and the story-branch session of one story get three state files" || fail "track: state files collide" "${sa} ${sb} ${ss}"
+[ "$(jq -r 'has("track")' "${plans}/.sessions/tr-s.json")" = false ] && pass "track: a binding without --track has no track field" || fail "track: the story-branch binding has a track field"
+sbx CLAUDE_CODE_SESSION_ID=tr-ab -- implement story-t --track A+B --parent t-orch >/dev/null 2>&1
+sbx CLAUDE_CODE_SESSION_ID=tr-ab2 -- implement story-t --track AB --parent t-orch >/dev/null 2>&1
+sab="$(sbx CLAUDE_CODE_SESSION_ID=tr-ab -- --state)"; sab2="$(sbx CLAUDE_CODE_SESSION_ID=tr-ab2 -- --state)"
+[ "${sab}" = "${plans}/story-t.d/implement-A+B.md" ] && [ "${sab2}" = "${plans}/story-t.d/implement-AB.md" ] \
+  && pass "track: tracks A+B and AB get two state files" || fail "track: A+B and AB" "${sab} ${sab2}"
+for role in plan pr-review orchestrator; do
+  o="$(sbx CLAUDE_CODE_SESSION_ID="tr-${role}" -- "${role}" story-t --track A 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [[ "${o}" == *"implement role only"* ]] && [ ! -e "${plans}/.sessions/tr-${role}.json" ] \
+    && pass "track: --track on the ${role} role exits 1 and binds nothing" || fail "track: --track on ${role} (exit ${c})" "${o}"
+done
+for k in 'A/B' 'A B' '../x' 'A;rm'; do
+  o="$(sbx CLAUDE_CODE_SESSION_ID=tr-bad -- implement story-t --track "${k}" 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [ ! -e "${plans}/.sessions/tr-bad.json" ] && pass "track: the key '${k}' exits 1" || fail "track: the key '${k}' (exit ${c})" "${o}"
+done
+o="$(sbx CLAUDE_CODE_SESSION_ID=tr-bad -- implement story-t --track 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [[ "${o}" == *"--track needs a key"* ]] && pass "track: --track without a key exits 1" || fail "track: --track without a key (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=tr-bad -- implement story-t --lane A 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [[ "${o}" == *"unknown option '--lane'"* ]] && pass "track: an unknown option exits 1" || fail "track: an unknown option (exit ${c})" "${o}"
+for args in "--track B --parent t-orch" "--parent t-orch"; do
+  # shellcheck disable=SC2086 # args holds several words on purpose
+  o="$(sbx CLAUDE_CODE_SESSION_ID=tr-a -- implement story-t ${args} 2>&1)"; c=$?
+  [ "${c}" -eq 1 ] && [[ "${o}" == *"of track A"* ]] && [ "$(jq -r '.track' "${plans}/.sessions/tr-a.json")" = A ] \
+    && pass "track: a track child cannot rebind with ${args}" || fail "track: a track child rebound with ${args} (exit ${c})" "${o}"
+done
+o="$(sbx CLAUDE_CODE_SESSION_ID=tr-s -- implement story-t --track A --parent t-orch 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [ "$(jq -r 'has("track")' "${plans}/.sessions/tr-s.json")" = false ] \
+  && pass "track: a child without a track cannot rebind into one" || fail "track: the story-branch child rebound into a track (exit ${c})" "${o}"
+o="$(sbx CLAUDE_CODE_SESSION_ID=tr-a -- implement story-t --track A --parent t-orch 2>&1)"; c=$?
+[ "${c}" -eq 0 ] && pass "track: a track child binds again with the same track" || fail "track: the same track binding again (exit ${c})" "${o}"
+
+long_state "${sa}"; printf 'MARK-TRACK-A\n' >>"${sa}"
+long_state "${ss}"; printf 'MARK-STORY-BRANCH\n' >>"${ss}"
+hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"tr-a"}'; o="${out}"
+[[ "${o}" == *"IMPLEMENT session of track A of story story-t"* && "${o}" == *"State: ${sa}"* && "${o}" == *"Status: ${plans}/story-t.d/status-A.md"* && "${o}" == *MARK-TRACK-A* && "${o}" != *MARK-STORY-BRANCH* ]] \
+  && pass "track: reprime of a track prints its card and its own state, not the story-branch state" || fail "track: reprime of track A" "${o}"
+hook session-reprime.sh '{"hook_event_name":"SessionStart","source":"clear","session_id":"tr-s"}'; o="${out}"
+[[ "${o}" == *"IMPLEMENT session of story story-t"* && "${o}" == *MARK-STORY-BRANCH* && "${o}" != *MARK-TRACK-A* && "${o}" != *"Status:"* ]] \
+  && pass "track: reprime of the story-branch session prints implement.md, not a track state" || fail "track: reprime of the story-branch session" "${o}"
+t="$(transcript tr 380000 claude-opus-5-5)"
+hook pre-compact.sh "$(jq -cn --arg t "${t}" '{hook_event_name:"PreCompact",session_id:"tr-a",trigger:"auto",transcript_path:$t}')"
+ls "${plans}/story-t.d/compact/"implement-A-*-state.md >/dev/null 2>&1 && grep -q MARK-TRACK-A "${plans}/story-t.d/compact/"implement-A-*-state.md \
+  && pass "track: pre-compact names the state copy after the track" || fail "track: no implement-A state copy" "$(ls "${plans}/story-t.d/compact/" 2>&1)"
+
 # /checkpoint writes the state file with a quoted heredoc in one Bash command, also from a child.
 ck_body=$'# Checkpoint\nDone: git push stays with the orchestrator\nCHECKPOINT-READY: x | continue'
 for role in plan implement pr-review; do

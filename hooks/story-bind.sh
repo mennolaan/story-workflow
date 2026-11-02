@@ -4,7 +4,12 @@
 # CLAUDE_CODE_SESSION_ID.
 #
 # Usage:
-#   story-bind.sh <role> <slug> [--parent <session id>]
+#   story-bind.sh <role> <slug> [--parent <session id>] [--track <key>]
+#                           --track binds an implement session to one track of
+#                           a parallel story (skills/story/SKILL.md, "Parallel
+#                           tracks"). The key is the track name of
+#                           story-groups.sh, from A-Z a-z 0-9 . _ + -. Its state
+#                           file is <slug>.d/implement-<key>.md.
 #   story-bind.sh --show    print the binding, or "unbound"
 #   story-bind.sh --state   print the checkpoint path of this session and create
 #                           its folder, because /checkpoint writes the file with cat >
@@ -25,9 +30,11 @@
 #
 # Writes <plans>/.sessions/<key>.json with role, slug, state, parent, bound_at,
 # session_id (the Claude Code id) and key (the file key, which is the desktop
-# host id when there is one; an orchestrator also gets children), and creates <plans>/<slug>.d/. A bound child binds again only
-# with the same role, story and parent. <plans> is the .plans/ folder
-# of the main checkout (story-lib.sh). Exit 1 with the reason on bad input.
+# host id when there is one; an orchestrator also gets children, a track
+# session gets track), and creates <plans>/<slug>.d/. A bound child binds again
+# only with the same role, story, parent and track. <plans> is the .plans/
+# folder of the main checkout (story-lib.sh). Exit 1 with the reason on bad
+# input.
 # Every mode exits 1 when the repo has no .claude/story.json or the file is not
 # valid JSON. It is a command, so it fails loud where the automatic hooks stay
 # silent.
@@ -226,23 +233,39 @@ if [ "${1:-}" = "--show" ]; then
   exit 0
 fi
 
+usage="Usage: story-bind.sh <role> <slug> [--parent <id>] [--track <key>]"
 role="${1:-}"
 slug="${2:-}"
 parent=""
-[ "${3:-}" = "--parent" ] && parent="$(story_clean "${4:-}")"
+track=""
+shift 2 2>/dev/null || set --
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --parent) parent="$(story_clean "${2:-}")"; shift 2 2>/dev/null || shift ;;
+    --track)
+      [ "$#" -ge 2 ] || fail "--track needs a key. ${usage}"
+      track="$2"; shift 2 ;;
+    *) fail "unknown option '$1'. ${usage}" ;;
+  esac
+done
 case " ${story_roles} " in
   *" ${role} "*) ;;
-  *) fail "role '${role}' is not one of: ${story_roles}. Usage: story-bind.sh <role> <slug> [--parent <id>]" ;;
+  *) fail "role '${role}' is not one of: ${story_roles}. ${usage}" ;;
 esac
 [ -n "${slug}" ] && [ "${slug}" = "$(story_clean "${slug}")" ] || fail "slug '${slug}' is empty or holds characters outside A-Z a-z 0-9 . _ -."
+if [ -n "${track}" ]; then
+  [ "${role}" = implement ] || fail "--track is for the implement role only, and the role is ${role}."
+  [[ "${track}" =~ ^[A-Za-z0-9._+-]+$ ]] || fail "track '${track}' holds characters outside A-Z a-z 0-9 . _ + -. Use the track name that story-groups.sh prints."
+fi
 if story_is_child "${my_role}"; then
   my_slug="$(story_field "${me}" slug)"
   my_parent="$(story_field "${me}" parent)"
+  my_track="$(story_field "${me}" track)"
   same=1
-  [ "${role}" = "${my_role}" ] && [ "${slug}" = "${my_slug}" ] || same=0
+  [ "${role}" = "${my_role}" ] && [ "${slug}" = "${my_slug}" ] && [ "${track}" = "${my_track}" ] || same=0
   [ -z "${my_parent}" ] || [ "${parent}" = "${my_parent}" ] || same=0
   [ "${same}" -eq 1 ] \
-    || fail "this session is bound as ${my_role} of story ${my_slug} under ${my_parent:-no parent}. A child does not change its role, story or parent. Its orchestrator unbinds it first."
+    || fail "this session is bound as ${my_role}${my_track:+ of track ${my_track}} of story ${my_slug} under ${my_parent:-no parent}. A child does not change its role, story, parent or track. Its orchestrator unbinds it first."
 fi
 
 backstop_gate
@@ -252,12 +275,14 @@ file="${dir}/.sessions/${key}.json"
 children='[]'
 [ "${my_role}" = orchestrator ] && [ "${role}" = orchestrator ] && children="$(jq -c '.children // []' "${me}" 2>/dev/null || echo '[]')"
 jq -n --arg role "${role}" --arg slug "${slug}" --arg parent "${parent}" --arg key "${key}" \
-  --arg sid "$(story_clean "${CLAUDE_CODE_SESSION_ID:-}")" \
+  --arg sid "$(story_clean "${CLAUDE_CODE_SESSION_ID:-}")" --arg track "${track}" \
   --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson children "${children}" \
   '{role:$role, slug:$slug, state:"active", parent:$parent, bound_at:$at, session_id:$sid, key:$key}
-   + (if $role == "orchestrator" then {children:$children} else {} end)' >"${file}" \
+   + (if $role == "orchestrator" then {children:$children} else {} end)
+   + (if $track != "" then {track:$track} else {} end)' >"${file}" \
   || fail "cannot write ${file}."
-printf 'Bound %s as %s of story %s.\n' "${key}" "${role}" "${slug}"
+printf 'Bound %s as %s%s of story %s.\n' "${key}" "${role}" "${track:+ of track ${track}}" "${slug}"
 printf 'Binding: %s\n' "${file}"
 printf 'Plan: %s/%s.md\n' "${dir}" "${slug}"
-printf 'State: %s/%s.d/%s.md\n' "${dir}" "${slug}" "${role}"
+printf 'State: %s/%s.d/%s%s.md\n' "${dir}" "${slug}" "${role}" "${track:+-${track}}"
+[ -z "${track}" ] || printf 'Status: %s/%s.d/status-%s.md\n' "${dir}" "${slug}" "${track}"

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Claude Code SessionStart (startup|clear|compact): re-prime a bound story
 # session. It prints the role card, the file paths, the role's state (at most
-# 3,000 characters) and the protocol line. An unbound session gets nothing.
+# 3,000 characters) and the protocol line. A track session gets the card of
+# its track and its own state file (story_state_file). An unbound session gets
+# nothing.
 # Plain stdout reaches the model on SessionStart (code.claude.com/docs/en/hooks,
 # as of 2026-10-27). Hook context is summarized away by a compaction, so this
 # runs again after each one.
@@ -29,12 +31,14 @@ dir="$(story_plans_dir)" || exit 0
 role="$(story_field "${b}" role)"
 slug="$(story_field "${b}" slug)"
 parent="$(story_field "${b}" parent)"
-state="${dir}/${slug}.d/${role}.md"
+track="$(story_clean_track "$(story_field "${b}" track)")"
+state="$(story_state_file "${input}")" || exit 0
 
-story_card "${role}" "${slug}" "${parent}" "${dir}/${slug}.md"
+story_card "${role}" "${slug}" "${parent}" "${dir}/${slug}.md" "${track}"
 printf 'Plan: %s/%s.md\n' "${dir}" "${slug}"
 printf 'Ledger: %s/%s.d/ledger.md\n' "${dir}" "${slug}"
 printf 'State: %s\n' "${state}"
+[ -z "${track}" ] || printf 'Status: %s/%s.d/status-%s.md\n' "${dir}" "${slug}" "${track}"
 if [ -f "${state}" ]; then
   printf '\nYour saved state (%s):\n' "$(date -r "${state}" -u '+%Y-%m-%d %H:%M UTC' 2>/dev/null)"
   head -c 3000 "${state}"

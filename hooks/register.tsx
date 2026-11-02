@@ -13,7 +13,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 type $ = EngineInterface
 
-type Binding = { role: string; slug: string; parent?: string }
+type Binding = { role: string; slug: string; parent?: string; track?: string }
 
 type Where = {
   plans: string
@@ -38,6 +38,14 @@ const RESUME_MS = 3_000
 const SENTINEL = /^CHECKPOINT-READY:\s*(.+?)\s*\|\s*(continue|wait)\s*$/
 
 const clean = (s: string | undefined) => (s ?? '').replace(/[^A-Za-z0-9._-]/g, '')
+// A track key keeps +, which joins the labels of a merged track (story-groups.sh).
+const cleanTrack = (s: string | undefined) => (s ?? '').replace(/[^A-Za-z0-9._+-]/g, '')
+
+/** The state file of a bound session, the rule of story_state_file in story-lib.sh: <slug>.d/<role>.md, or <role>-<track>.md for a track. */
+const statePath = (plans: string, b: Binding) => {
+  const track = cleanTrack(b.track)
+  return `${plans}/${b.slug}.d/${b.role}${track ? `-${track}` : ''}.md`
+}
 
 /** A resume the mod owes after its own compaction: the turn end it follows, and the state file's mtime before the compaction. */
 type Pending = { w: Where; since: number; mtimeMs: number; token: number; isCompacted?: true }
@@ -116,7 +124,7 @@ const where = async ($: $): Promise<Where> => {
     const binding = await readJson<Binding>($, `${plans}/.sessions/${k}.json`)
     if (binding?.role && binding.slug) {
       mem.logPath = `${plans}/.sessions/${k}.log`
-      return { plans, key: k, binding, state: `${plans}/${binding.slug}.d/${binding.role}.md` }
+      return { plans, key: k, binding, state: statePath(plans, binding) }
     }
   }
   return { plans, key, state: `${plans}/.sessions/${key}.md` }
@@ -126,9 +134,12 @@ const card = (w: Where) => {
   const b = w.binding
   if (!b) return 'This session is not bound to a story.'
   const parent = b.parent ? ` Its orchestrator is ${b.parent}.` : ''
-  return b.role === 'orchestrator'
-    ? `This session is the ORCHESTRATOR of story ${b.slug}. It alone asks the user and acts outward.`
-    : `This session is the ${b.role.toUpperCase()} session of story ${b.slug}. It never asks the user and never acts outward.${parent}`
+  const track = cleanTrack(b.track)
+  if (b.role === 'orchestrator') return `This session is the ORCHESTRATOR of story ${b.slug}. It alone asks the user and acts outward.`
+  if (track) {
+    return `This session is the ${b.role.toUpperCase()} session of track ${track} of story ${b.slug}. It never asks the user and never acts outward. It works on its own track branch and writes ${b.slug}.d/status-${track}.md, never the story branch or "## Implementation status".${parent}`
+  }
+  return `This session is the ${b.role.toUpperCase()} session of story ${b.slug}. It never asks the user and never acts outward.${parent}`
 }
 
 const instructions = (w: Where) =>

@@ -33,7 +33,7 @@ type World = {
 
 const world = (
   on: On,
-  options: { percent?: number; tokens?: number; rawMax?: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean },
+  options: { percent?: number; tokens?: number; rawMax?: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean; track?: string },
 ): World => {
   const w: World = { files: new Map(), compacts: [], commands: [], prompts: [], toasts: [], statuses: [], writes: [] }
   w.files.set(`${CWD}/.git`, { text: `gitdir: ${ROOT}/.git/worktrees/wt 1\n`, mtimeMs: T0 })
@@ -42,7 +42,7 @@ const world = (
     w.files.set(`${CWD}/.claude/story.json`, { text: `{"checkpointPercent": ${options.worktreePercent}}`, mtimeMs: T0 })
   }
   w.files.set(`${PLANS}/.sessions/local_h1.json`, {
-    text: JSON.stringify({ role: 'implement', slug: 'story-x', parent: 'local_orch' }),
+    text: JSON.stringify({ role: 'implement', slug: 'story-x', parent: 'local_orch', ...(options.track ? { track: options.track } : {}) }),
     mtimeMs: T0,
   })
   if (options.state) w.files.set(STATE, options.state)
@@ -237,6 +237,25 @@ test('a manual compaction is steered to the state file too', async ($, on) => {
   expect(w.compacts.length).toBe(1)
   expect(w.compacts[0]).toContain('keep the plan')
   expect(w.compacts[0]).toContain(STATE)
+})
+
+test('a track session is steered to its own state file and named as its track', async ($, on) => {
+  mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 10, track: 'A' })
+  await $.session.compact({ trigger: 'manual', instructions: 'keep the plan', messages: MESSAGES })
+  expect(w.compacts.length).toBe(1)
+  expect(w.compacts[0]).toContain(`${PLANS}/story-x.d/implement-A.md`)
+  expect(w.compacts[0]).not.toContain(STATE)
+  expect(w.compacts[0]).toContain('IMPLEMENT session of track A of story story-x')
+  expect(w.compacts[0]).toContain('story-x.d/status-A.md')
+})
+
+test('a merged track keeps its + in the state path, apart from a label without it', async ($, on) => {
+  mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 10, track: 'A+B' })
+  await $.session.compact({ trigger: 'manual', instructions: 'keep the plan', messages: MESSAGES })
+  expect(w.compacts[0]).toContain(`${PLANS}/story-x.d/implement-A+B.md`)
+  expect(w.compacts[0]).not.toContain('implement-AB.md')
 })
 
 test('a prompt the person sends after the turn ends blocks the resume prompt', async ($, on) => {
