@@ -133,10 +133,12 @@ Every start happens in the turn of the user's answer. The app refuses `start_ses
 ### The scheduler step
 
 At each side-sessions event, for each child that ended a turn:
+- Track `PHASE DONE #<task> -`: the track has bound and waits for its base. Check its binding and title only. Record it as `waits for base` in `## Tracks`, and send nothing.
+- Story-branch `PHASE DONE #{{STORY_ID}} -`: it has bound and waits for the merge. Record it, and send nothing.
 - Story-branch `PHASE DONE #<last foundation task> <sha>`: the phase check. Record the sha as the base sha in `## Tracks`. Send each waiting track `next: #<first task> base <sha>`.
 - Track `PHASE DONE #<task> <sha>`: the phase check, plus `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" --scope <plan path> <track tasks> <base sha> <sha>` in the track's worktree. It must print `SCOPE ok`. A failed check is a deviation: send it back to the track, and ask the user only when the fix needs a plan change. Then send `next: #<next task>`.
 - Track `DONE <track branch> <sha>`: the same checks. Record the sha. Unbind the track and stop it.
-- `QUESTION`, `BLOCKED`, `CHECKPOINT`: as in "Status tokens".
+- Every other story-branch `PHASE DONE #<task> <sha>` (a foundation task that is not the last one, the merge, an integrate task), and `QUESTION`, `BLOCKED`, `CHECKPOINT`: as in "Status tokens".
 
 Start queued tracks while fewer than `parallel.max` run. When the app refuses a start, keep the proposal card that the refusal offers. Record the track as `waits for the user` in the ledger, tell the user in one line which card to click, and set ❗. When every track is `DONE`, send the story-branch session `next: #{{STORY_ID}} merge`.
 

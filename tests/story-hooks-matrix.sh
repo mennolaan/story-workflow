@@ -1417,7 +1417,9 @@ grep -v -- '--track {{TRACK}}' "${tb}" >"${tmp}/no-track.md"
 parallel_skill_bad() { # parallel_skill_bad <SKILL.md>: prints each part of the parallel procedure that /story lacks
   local f="$1" want
   for want in '## Parallel tracks' 'hooks/story-groups.sh" <plan path>' 'story-groups.sh" --scope' 'briefs/implement-track.md' '"Start N tracks in parallel, or one session?"' \
-    'next: #{{STORY_ID}} merge' 'DONE <track branch> <sha>' 'Do not archive a track before the story PR is open' '`<slug>.d/status-<track>.md`'; do
+    'next: #{{STORY_ID}} merge' 'DONE <track branch> <sha>' 'Do not archive a track before the story PR is open' '`<slug>.d/status-<track>.md`' \
+    'Track `PHASE DONE #<task> -`: the track has bound and waits for its base' 'Story-branch `PHASE DONE #{{STORY_ID}} -`: it has bound and waits for the merge' \
+    'Every other story-branch `PHASE DONE #<task> <sha>`'; do
     grep -qF -- "${want}" "${f}" || printf 'missing: %s\n' "${want}"
   done
   return 0
@@ -1426,6 +1428,8 @@ o="$(parallel_skill_bad "${story}/SKILL.md")"
 [ -z "${o}" ] && pass "parallel: /story names story-groups.sh, the gate question, the scope check, the merge go and the track DONE row" || fail "parallel: /story lacks a part of the parallel procedure" "${o}"
 grep -v 'story-groups.sh" <plan path>' "${story}/SKILL.md" >"${tmp}/no-groups.md"
 [ -n "$(parallel_skill_bad "${tmp}/no-groups.md")" ] && pass "parallel: a /story without the story-groups.sh gate fails" || fail "parallel: a /story without story-groups.sh passed"
+grep -v 'waits for its base' "${story}/SKILL.md" >"${tmp}/no-wait.md"
+[[ "$(parallel_skill_bad "${tmp}/no-wait.md")" == *"waits for its base"* ]] && pass "parallel: a /story whose scheduler has no handler for a waiting track fails" || fail "parallel: a scheduler without the waiting-track handler passed"
 for want in 'git cherry-pick <base sha>..<track branch>' 'git cherry-pick --abort' 'next: #{{STORY_ID}} merge' 'status-<track>.md'; do
   grep -qF -- "${want}" "${story}/briefs/implement.md" && pass "parallel: the implement brief holds the merge step '${want}'" || fail "parallel: the implement brief lacks '${want}'"
 done
