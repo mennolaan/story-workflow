@@ -26,7 +26,7 @@ Only when the orchestrator runs the story in parallel tracks (`{{PLUGIN}}/skills
 - Without foundation tasks, your first turn only does the first steps above, and ends with recap first line `PHASE DONE #{{STORY_ID}} -`. Then wait for `next: #{{STORY_ID}} merge`.
 - The merge phase, when the orchestrator sends `next: #{{STORY_ID}} merge`:
   - Read the tracks, their branches and the base sha from `## Tracks` in `{{PLANS}}/{{SLUG}}.d/ledger.md`.
-  - For each track, in ledger order: `git cherry-pick <base sha>..<track branch>`.
+  - For each track, in ledger order: `git cherry-pick <base sha>..<track branch>`. Skip a track that is already on `{{BRANCH}}`, after a `BLOCKED` or a `/clear`: `git cherry HEAD <track branch> <base sha>` prints no `+` line for it.
   - On a conflict: `git cherry-pick --abort`. End the turn with recap first line `BLOCKED`, the track and the paths. A conflict means a claim was wrong, so the orchestrator decides. Never guess a resolution.
   - Copy each `{{PLANS}}/{{SLUG}}.d/status-<track>.md` into `## Implementation status`.
   - Run the full verification of the repo's {{CONVENTIONS}} on the merged branch.

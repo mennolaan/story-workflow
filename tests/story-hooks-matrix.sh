@@ -1460,7 +1460,7 @@ grep -v 'story-groups.sh" "<plan path>"' "${story}/SKILL.md" >"${tmp}/no-groups.
 [ -n "$(parallel_skill_bad "${tmp}/no-groups.md")" ] && pass "parallel: a /story without the story-groups.sh gate fails" || fail "parallel: a /story without story-groups.sh passed"
 grep -v 'waits for its base' "${story}/SKILL.md" >"${tmp}/no-wait.md"
 [[ "$(parallel_skill_bad "${tmp}/no-wait.md")" == *"waits for its base"* ]] && pass "parallel: a /story whose scheduler has no handler for a waiting track fails" || fail "parallel: a scheduler without the waiting-track handler passed"
-for want in 'git cherry-pick <base sha>..<track branch>' 'git cherry-pick --abort' 'next: #{{STORY_ID}} merge' 'status-<track>.md'; do
+for want in 'git cherry-pick <base sha>..<track branch>' 'git cherry HEAD <track branch> <base sha>' 'git cherry-pick --abort' 'next: #{{STORY_ID}} merge' 'status-<track>.md'; do
   grep -qF -- "${want}" "${story}/briefs/implement.md" && pass "parallel: the implement brief holds the merge step '${want}'" || fail "parallel: the implement brief lacks '${want}'"
 done
 for want in '| Task | Wave | Depends | Files | Track |' 'hooks/story-groups.sh" "{{PLANS}}/{{SLUG}}.md"' 'Check the claims table against the repo'; do
