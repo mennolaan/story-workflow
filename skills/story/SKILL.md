@@ -90,7 +90,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 ## Flow
 
 1. **Plan.** The plan session writes the plan, runs `{{REVIEW_PLAN}}` on the first full proposal, folds in the accepted findings and ends with `PLAN READY <path>`.
-2. **Plan gate.** Read the plan summary and its `## Review`. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks").
+2. **Plan gate.** Read the plan summary and its `## Review`. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
 3. **Implement.** Stop the plan session. In sequential mode, start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification of the repo's CLAUDE.md, commits locally, runs `{{REVIEW_CHANGES}}` and ends with `DOCKET <path>`. In parallel mode, start the story-branch session and the tracks ("Parallel tracks"). The story-branch session merges the tracks, runs the integrate tasks and the review, and ends with `DOCKET <path>`.
 4. **Docket.** Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
 5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `{{PR_CREATE}}` here. When the config has no `pr.create`, ask the user how to open the PR. Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
@@ -120,7 +120,7 @@ With `MODE parallel`, show the user:
 - the cap and the queue, as the `MODE` line prints them;
 - the cost: each track starts near 100k tokens, on top of the story-branch session.
 
-Then ask one question: "Start N tracks in parallel, or one session?". Record the answer in the user's words in the ledger. On "one session", run the sequential flow.
+Then ask: "Start N tracks in parallel, or one session?". When the plan lists an open decision for the user, ask it in the same turn, and start nothing before the user has answered all of them. Record each answer in the user's words in the ledger. On "one session", run the sequential flow.
 
 ### Start
 
