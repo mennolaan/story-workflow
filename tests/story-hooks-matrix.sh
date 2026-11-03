@@ -1411,6 +1411,10 @@ out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/
 [ "${code}" -eq 1 ] && [[ "${out}" == *"the plan claims './src/'. Write the path from the repo root"* ]] && pass "groups: scope refuses a claim with a leading ./" || fail "groups: scope with a ./ claim" "${out}"
 out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
 [ "${code}" -eq 0 ] && [ "${out}" = "SCOPE ok" ] && pass "groups: scope: only claimed files changed" || fail "groups: scope ok" "${out}"
+mkdir -p "${sgg}/lib" && echo m >"${sgg}/lib/other.cs" && git -C "${sgg}" add . && git -C "${sgg}" commit -qm other && sg_mv="$(git -C "${sgg}" rev-parse HEAD)"
+git -C "${sgg}" mv lib/other.cs src/moved.cs && git -C "${sgg}" commit -qm move
+out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_mv}" 2>&1)"; code=$?
+[ "${code}" -eq 1 ] && [ "${out}" = "OUTSIDE lib/other.cs" ] && pass "groups: scope: a rename out of an unclaimed path lists the old path" || fail "groups: scope of a rename into the claim" "${out}"
 
 # 5d. parallel tracks: the procedure files
 tb="${story}/briefs/implement-track.md"

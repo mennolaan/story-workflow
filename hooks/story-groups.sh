@@ -29,7 +29,8 @@
 #   story-groups.sh --scope <plan file> <task,task,...> <base> [<head>]
 #       Lists the files changed between base and head (default HEAD) that no
 #       claim of the named tasks covers (OUTSIDE) or that match a shared glob
-#       (SHARED). Exit 1 when there is any, else prints SCOPE ok.
+#       (SHARED). A rename counts as a change of both paths. Exit 1 when
+#       there is any, else prints SCOPE ok.
 #
 # Config (the file of story_config_file in story-lib.sh):
 #   parallel.max     cap on parallel tracks. Default 1 (off).
@@ -167,7 +168,7 @@ if [ "${1:-}" = "--scope" ]; then
   while IFS= read -r c; do
     if claim_bad "${c}"; then die "the plan claims '${c}'. ${claim_rule}"; fi
   done <<<"${claims}"
-  files="$(git diff --name-only "${base}..${head}" 2>&1)" || die "git diff ${base}..${head} failed: ${files}"
+  files="$(git diff --name-only --no-renames "${base}..${head}" 2>&1)" || die "git diff ${base}..${head} failed: ${files}"
   bad=0
   while IFS= read -r file; do
     [ -n "${file}" ] || continue
