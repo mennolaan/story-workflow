@@ -1437,7 +1437,7 @@ parallel_skill_bad() { # parallel_skill_bad <SKILL.md>: prints each part of the 
   for want in '## Parallel tracks' 'hooks/story-groups.sh" "<plan path>"' 'story-groups.sh" --scope' 'briefs/implement-track.md' '"Start N tracks in parallel, or one session?"' \
     'next: #{{STORY_ID}} merge' 'DONE <track branch> <sha>' 'Do not archive a track before the story PR is open' '`<slug>.d/status-<track>.md`' \
     'Track `PHASE DONE #<task> -`: the track has bound and waits for its base' 'Story-branch `PHASE DONE #{{STORY_ID}} -`: it has bound and waits for the merge' \
-    'Every other story-branch `PHASE DONE #<task> <sha>`'; do
+    'Every other story-branch `PHASE DONE #<task> <sha>`' 'When `## Tracks` already holds the base sha, send `next: #<first task> base <sha>` at once.'; do
     grep -qF -- "${want}" "${f}" || printf 'missing: %s\n' "${want}"
   done
   return 0

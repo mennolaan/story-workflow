@@ -82,7 +82,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 | `{{TRACK}}` | track only: the track name that `story-groups.sh` prints, for example `A`, `A+B` or `t2` |
 | `{{TRACK_BRANCH}}` | track only: `{{BRANCH}}-{{TRACK}}`, a local branch that is never pushed |
 | `{{TRACK_TASKS}}` | track only: the task ids of the track, comma separated, as `story-groups.sh --scope` takes them, for example `430,431` |
-| `{{BASE_SHA}}` | track only: the commit the track branch starts from. With foundation tasks: `pending`, and the sha comes with the first `next:`. Without: the head of `origin/{{BRANCH}}` when it exists, else of `origin/{{BASE}}`, read at the plan gate |
+| `{{BASE_SHA}}` | track only: the commit the track branch starts from. With foundation tasks: `pending` until `## Tracks` holds the base sha, then that sha. While it is `pending`, the sha comes with the first `next:`. Without: the head of `origin/{{BRANCH}}` when it exists, else of `origin/{{BASE}}`, read at the plan gate |
 | `{{PLAN_TASK}}`, `{{REVIEW_TASK}}` | the board task of the plan phases and of the PR review phases; the story id when the board has no such task |
 
 `story.example.json` beside this file is a GitHub example without a `review` block. To run a review panel, add `"review": {"plan": ..., "changes": ..., "pr": ..., "fallback": ...}` with the review commands of the repo. A key that the config does not have fills its placeholder with `none`. Without a `review` block every `{{REVIEW_*}}` is `none`: the sessions skip the panel and say so in their report, and the orchestrator tells the user at the plan gate and at the docket step. Conventions (commits, prose, verification, research, PR review) come from the repo's `{{CONVENTIONS}}`, never from this plugin.
@@ -127,13 +127,13 @@ Then ask one question: "Start N tracks in parallel, or one session?". Record the
 Every start happens in the turn of the user's answer. The app refuses `start_session` on a turn that a message or an automated event started.
 1. Start the story-branch session with `briefs/implement.md`. With foundation tasks, its phases start with them, and its last foundation phase ends with `PHASE DONE #<task> <sha>`. That sha is `{{BASE_SHA}}`. Without foundation tasks, its first turn only binds, reads the plan and switches to `{{BRANCH}}`, and ends with `PHASE DONE #{{STORY_ID}} -`.
 2. Start the tracks, at most `parallel.max`, in table order, each with `briefs/implement-track.md` and its own worktree. Fill `{{TRACK}}` with the track name that `story-groups.sh` prints. Adopt each one. Record each in `## Tracks` of the ledger.
-3. With foundation tasks, each track's first turn only binds and reads the plan, and ends with `PHASE DONE #<first task> -`. Without, `{{BASE_SHA}}` is in the brief and the track starts its first task at once.
+3. While `{{BASE_SHA}}` is `pending`, each track's first turn only binds and reads the plan, and ends with `PHASE DONE #<first task> -`. Else `{{BASE_SHA}}` is in the brief and the track starts its first task at once.
 4. A track works on `{{TRACK_BRANCH}}` only. It never touches `{{BRANCH}}` and never pushes.
 
 ### The scheduler step
 
 At each side-sessions event, for each child that ended a turn:
-- Track `PHASE DONE #<task> -`: the track has bound and waits for its base. Check its binding and title only. Record it as `waits for base` in `## Tracks`, and send nothing.
+- Track `PHASE DONE #<task> -`: the track has bound and waits for its base. Check its binding and title only. Record it as `waits for base` in `## Tracks`, and send nothing. When `## Tracks` already holds the base sha, send `next: #<first task> base <sha>` at once.
 - Story-branch `PHASE DONE #{{STORY_ID}} -`: it has bound and waits for the merge. Record it, and send nothing.
 - Story-branch `PHASE DONE #<last foundation task> <sha>`: the phase check. Record the sha as the base sha in `## Tracks`. Send each waiting track `next: #<first task> base <sha>`.
 - Track `PHASE DONE #<task> <sha>`: the phase check, plus `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" --scope "<plan path>" <track tasks> <base sha> <sha>` in the track's worktree. It must print `SCOPE ok`. A failed check is a deviation: send it back to the track, and ask the user only when the fix needs a plan change. Then send `next: #<next task>`.
