@@ -64,7 +64,8 @@ if [ -f "${cfg}" ]; then
 fi
 [[ "${max}" =~ ^[0-9]+$ ]] || die "parallel.max in ${cfg} is '${max}', not a whole number."
 
-# rows <plan>: task<TAB>wave<TAB>depends<TAB>files<TAB>track, from the claims table.
+# rows <plan>: task, wave, depends, files and track, from the claims table. The
+# separator is \037, not a tab: read collapses empty fields between tabs.
 rows() {
   awk '
     function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
@@ -83,7 +84,7 @@ rows() {
       gsub(/#/, "", t); gsub(/[ \t]+/, "", t)
       gsub(/[ \t]+/, "", d); gsub(/#/, "", d)
       gsub(/[ \t]+/, "", f)
-      printf "%s\t%s\t%s\t%s\t%s\n", t, toupper(w), d, f, l
+      printf "%s\037%s\037%s\037%s\037%s\n", t, toupper(w), d, f, l
     }
     END { if (!seen) exit 3 }
   ' "$1"
@@ -153,7 +154,7 @@ is_shared() {
 # plan_claims <plan> <task list, comma separated>: the claims of those tasks.
 plan_claims() {
   local plan="$1" want=",$2," t w d f c
-  while IFS=$'\t' read -r t w d f _; do
+  while IFS=$'\037' read -r t w d f _; do
     case "${want}" in *",${t},"*) ;; *) continue ;; esac
     [ "${f}" = "-" ] && continue
     for c in ${f//,/ }; do printf '%s\n' "${c}"; done
@@ -193,7 +194,7 @@ tsv="$(rows "${plan}")"; rc=$?
 
 n=0
 T=(); W=(); D=(); F=(); L=()
-while IFS=$'\t' read -r t w d f l; do
+while IFS=$'\037' read -r t w d f l; do
   [ -n "${t}" ] || die "a row of the claims table has no task id."
   [[ "${t}" =~ ^[A-Za-z0-9._-]+$ ]] || die "task id '${t}' holds characters outside A-Z a-z 0-9 . _ -."
   i=0

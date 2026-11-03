@@ -1379,6 +1379,10 @@ sg_plan "${tmp}/sg-dup.md" '| 1 | T | - | `a` | A |' '| 1 | T | - | `b` | B |'; 
 sg_plan "${tmp}/sg-unk.md" '| 1 | T | 9 | `a` | A |'; sg_bad "${tmp}/sg-unk.md" "not in the claims table" "unknown dependency"
 sg_plan "${tmp}/sg-wave.md" '| 1 | X | - | `a` | A |'; sg_bad "${tmp}/sg-wave.md" "has wave 'X'" "unknown wave"
 sg_plan "${tmp}/sg-nofile.md" '| 1 | T | - | - | A |'; sg_bad "${tmp}/sg-nofile.md" "claims no file" "track task without files"
+sg_plan "${tmp}/sg-emptyf.md" '| 1 | T | - | `a` | A |' '| 2 | T | - |  | A |'; sg_bad "${tmp}/sg-emptyf.md" "task 2 has an empty Files cell" "an empty Files cell before a label"
+sg_plan "${tmp}/sg-emptyd.md" '| 1 | T | - | `a` | A |' '| 2 | T |  | `b` | B |'
+sg_run "${tmp}/sg-emptyd.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"TRACK B 2"* ]] && pass "groups: control: an empty Depends cell reads as -" || fail "groups: an empty Depends cell" "${out}"
 sg_plan "${tmp}/sg-fdep.md" '| 1 | F | 2 | `a` | - |' '| 2 | T | - | `b` | A |'; sg_bad "${tmp}/sg-fdep.md" "foundation task 1 depends on 2" "foundation on a track"
 sg_plan "${tmp}/sg-fwd.md" '| 1 | T | 2 | `a` | A |' '| 2 | T | - | `b` | A |'; sg_bad "${tmp}/sg-fwd.md" "comes later in the table" "forward dependency"
 sg_plan "${tmp}/sg-fwd2.md" '| 1 | T | 2 | `a` | A |' '| 2 | T | - | `b` | B |'; sg_bad "${tmp}/sg-fwd2.md" "comes later in the table" "forward dependency across two labels"
