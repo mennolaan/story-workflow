@@ -827,6 +827,9 @@ for args in "--track B --parent t-orch" "--parent t-orch"; do
   [ "${c}" -eq 1 ] && [[ "${o}" == *"of track A"* ]] && [ "$(jq -r '.track' "${plans}/.sessions/tr-a.json")" = A ] \
     && pass "track: a track child cannot rebind with ${args}" || fail "track: a track child rebound with ${args} (exit ${c})" "${o}"
 done
+o="$(sbx CLAUDE_CODE_SESSION_ID=tr-a -- implement story-t --track A --parent other-orch 2>&1)"; c=$?
+[ "${c}" -eq 1 ] && [[ "${o}" == *"under t-orch"* ]] && [ "$(jq -r '.parent' "${plans}/.sessions/tr-a.json")" = t-orch ] \
+  && pass "track: a track child cannot rebind under another parent" || fail "track: a track child rebound under another parent (exit ${c})" "${o}"
 o="$(sbx CLAUDE_CODE_SESSION_ID=tr-s -- implement story-t --track A --parent t-orch 2>&1)"; c=$?
 [ "${c}" -eq 1 ] && [ "$(jq -r 'has("track")' "${plans}/.sessions/tr-s.json")" = false ] \
   && pass "track: a child without a track cannot rebind into one" || fail "track: the story-branch child rebound into a track (exit ${c})" "${o}"
