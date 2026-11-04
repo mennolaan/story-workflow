@@ -252,8 +252,13 @@ const resume = async ($: $, token: number) => {
 // refuses $.session.compact for good, but runs /compact between turns. /compact fires
 // the session.compact hook below, which adds the steer, so it gets no instructions here.
 // That /compact can run after this call returns, so the hook arms the resume.
+// A desktop session with a surface attached (Remote Control, a split view) still runs
+// through the SDK, and $.session.compact refuses there too. CLAUDE_CODE_ENTRYPOINT names
+// that host (claude-desktop, or sdk-* for other SDK hosts), so it goes the /compact way.
+const SDK_HOST = /^(claude-desktop|sdk-)/
+const isSdkHost = async ($: $) => SDK_HOST.test((await $.env.get('CLAUDE_CODE_ENTRYPOINT')) ?? '')
 const compactNow = async ($: $, w: Where): Promise<{ skip?: string; isQueued?: true }> => {
-  if ((await $.session.surfaces()).length === 0) {
+  if ((await $.session.surfaces()).length === 0 || (await isSdkHost($))) {
     await $.command.run({ command: 'compact' })
     return { isQueued: true }
   }

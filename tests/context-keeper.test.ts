@@ -33,7 +33,7 @@ type World = {
 
 const world = (
   on: On,
-  options: { percent?: number; tokens?: number; rawMax?: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean; track?: string },
+  options: { percent?: number; tokens?: number; rawMax?: number; window?: number; draft?: string; state?: File; crossed?: number; worktreePercent?: number; headless?: boolean; compactError?: string; noConfig?: boolean; track?: string; entrypoint?: string },
 ): World => {
   const w: World = { files: new Map(), compacts: [], commands: [], prompts: [], toasts: [], statuses: [], writes: [] }
   w.files.set(`${CWD}/.git`, { text: `gitdir: ${ROOT}/.git/worktrees/wt 1\n`, mtimeMs: T0 })
@@ -48,7 +48,7 @@ const world = (
   if (options.state) w.files.set(STATE, options.state)
   if (options.crossed !== undefined) w.files.set(CROSSED, { text: `${options.crossed}\n`, mtimeMs: T0 })
 
-  mock.env(on, { CLAUDE_CODE_HOST_SESSION_ID: 'local_h1' })
+  mock.env(on, { CLAUDE_CODE_HOST_SESSION_ID: 'local_h1', ...(options.entrypoint ? { CLAUDE_CODE_ENTRYPOINT: options.entrypoint } : {}) })
   on('session.cwd', () => ({ value: CWD }))
   on('session.id', () => ({ value: 'sid-1' }))
   on('session.surfaces', () => ({ value: options.headless ? [] : ['terminal' as const] }))
@@ -283,6 +283,29 @@ test('a headless host compacts with /compact, never with $.session.compact, and 
   await $.session.compact({ trigger: 'manual', messages: MESSAGES })
   await settle(clock)
   expect(w.prompts).toEqual([RESUME])
+})
+
+test('a desktop session with a surface (Remote Control) compacts with /compact, never with $.session.compact', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt, entrypoint: 'claude-desktop' })
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.commands).toEqual(['compact'])
+  expect(w.compacts.length).toBe(0)
+  expect(w.files.get(CROSSED)?.text).toBe('')
+  expect(w.files.get(LOG)).toBeUndefined()
+  await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+  await settle(clock)
+  expect(w.prompts).toEqual([RESUME])
+})
+
+test('a CLI session with a surface still compacts with $.session.compact', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 36, state: fresh('wait'), crossed: crossedAt, entrypoint: 'cli' })
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.commands).toEqual([])
+  expect(w.compacts.length).toBe(1)
 })
 
 test('a refusal that repeats is logged once, with its error text, and not retried 40 times', async ($, on) => {
