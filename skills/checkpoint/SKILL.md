@@ -68,11 +68,11 @@ The last line of the file is exactly:
 CHECKPOINT-READY: <absolute path of this file> | continue
 ```
 
-- Use `continue` when the next action needs no answer from anyone. 3 seconds after the compaction ends, the context-keeper mod reads the file again and sends "Continue from <path>: next action <...>". It sends nothing when a prompt came, a turn started, a turn was aborted or the file changed after the compaction.
+- Use `continue` when the next action needs no answer from anyone. 3 seconds after the compaction ends, the context-keeper mod reads the file again and sends "Continue from <path>: next action <...>". It sends nothing when a prompt came, a turn started, a turn was aborted, the file changed after the compaction, or more than 3 turns ended after the last write of the file.
 - Use `wait` when the next action waits on the orchestrator or the user. Then nothing resumes by itself.
 
 ## 4. Then
 
 - Read the file back once. Check the line count and the sentinel.
-- Finish the turn as planned. The context-keeper mod compacts at the turn boundary. Without the mod, the backstop compacts later, at about 400k tokens (40% of a 1M window).
+- Finish the turn as planned. The context-keeper mod compacts at the turn boundary. When more than 3 turns end before the compaction runs, the mod runs `/checkpoint` again first. Without the mod, the backstop compacts later, at about 400k tokens (40% of a 1M window).
 - A child session ends its turn with `wrap_up`, recap first line `CHECKPOINT`. Before `wrap_up`, a story session sets its title to 💾 `CHECKPOINT` plus `<Role> · <story id> <short name>` (`${CLAUDE_PLUGIN_ROOT}/skills/story/SKILL.md`, "Session title states").

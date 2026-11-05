@@ -8,7 +8,7 @@ The plugin holds:
 - `/checkpoint`: saves the state of a session before a compaction or a `/clear`.
 - The story-reader agent: reads stories, tasks and issues on haiku and returns a digest.
 - Hooks: a role guard for the child sessions, a board-read guard that keeps board reads in the story-reader agent, the context rule, the re-prime after a compaction, the compaction trail, and an optional plan-boundary reminder.
-- The context-keeper mod: compacts at the turn boundary and resumes from the saved state.
+- The context-keeper mod: compacts at the turn boundary and resumes from the saved state. A checkpoint more than 3 turns old is saved again first.
 
 The plugin does nothing in a repo without `.claude/story.json`. Install it once, then turn it on per repo.
 
