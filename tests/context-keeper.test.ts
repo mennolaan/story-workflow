@@ -587,3 +587,77 @@ test('a turn that ends after /compact is queued and before it runs does not send
   await settle(clock)
   expect(w.prompts).toEqual([RESUME])
 })
+
+// A turn starts before each compaction try and runs past the 40 retries, so that turn end
+// does not compact.
+const blockedTurnEnds = async ($: Parameters<Parameters<typeof test>[1]>[0], clock: { advance: (ms: number) => Promise<void> }, n: number) => {
+  for (let i = 0; i < n; i++) {
+    await $.turn.complete(turnEnd())
+    await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+    for (let j = 0; j < 45; j++) await clock.advance(500)
+  }
+}
+
+test('a fresh checkpoint whose compaction is blocked at 4 turn ends asks for /checkpoint once and does not compact from it', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt })
+  await blockedTurnEnds($, clock, 4)
+  expect(w.compacts.length).toBe(0)
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.commands).toEqual(['checkpoint'])
+  expect(w.compacts.length).toBe(0)
+  expect(w.files.get(LOG)?.text ?? '').toContain(`${STATE} is 4 turns behind, so /checkpoint runs again`)
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.commands).toEqual(['checkpoint'])
+  expect(w.compacts.length).toBe(0)
+  expect(w.prompts).toEqual([])
+})
+
+test('a compaction blocked at 2 turn ends runs at the next one, with no new /checkpoint', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt })
+  await blockedTurnEnds($, clock, 2)
+  expect(w.compacts.length).toBe(0)
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.commands).toEqual([])
+  expect(w.compacts.length).toBe(1)
+  expect(w.prompts).toEqual([RESUME])
+})
+
+test('after the new checkpoint is written the count starts at 0 and the next turn end compacts and resumes from it', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 })
+  const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt })
+  await blockedTurnEnds($, clock, 4)
+  await $.turn.complete(turnEnd())
+  await settle(clock)
+  expect(w.commands).toEqual(['checkpoint'])
+  await $.turn.start({ turnId: 't3' } as Parameters<typeof $.turn.start>[0])
+  w.files.set(STATE, { text: checkpoint('continue').replace('run the matrix again', 'push the branch'), mtimeMs: LATER })
+  await $.turn.complete({ ...turnEnd(), turnId: 't3' })
+  await settle(clock)
+  expect(w.compacts.length).toBe(1)
+  expect(w.prompts).toEqual([RESUME.replace('run the matrix again', 'push the branch')])
+})
+
+for (const host of [{ headless: true }, { entrypoint: 'claude-desktop' }]) {
+  test(`a queued /compact that runs 4 turn ends later sends no resume prompt and logs why (${JSON.stringify(host)})`, async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const w = world(on, { percent: 36, state: fresh('continue'), crossed: crossedAt, ...host })
+    await $.turn.complete(turnEnd())
+    await settle(clock)
+    expect(w.commands).toEqual(['compact'])
+    for (let i = 0; i < 4; i++) {
+      await $.turn.start({ turnId: 't2' } as Parameters<typeof $.turn.start>[0])
+      await $.turn.complete({ ...turnEnd(), turnId: 't2' })
+    }
+    await $.session.compact({ trigger: 'manual', messages: MESSAGES })
+    await settle(clock)
+    expect(w.prompts).toEqual([])
+    const lines = (w.files.get(LOG)?.text ?? '').split('\n').filter(l => l.includes('turns behind'))
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(`${STATE} is 4 turns behind at the compaction, so the session does not resume from it`)
+  })
+}

@@ -34,6 +34,11 @@ const RETRY_MS = 500
 // side-session note), so its text is written as late as possible: this long after
 // the compaction ends, and only while no other turn has started.
 const RESUME_MS = 3_000
+// A checkpoint that is fresh by the crossing but this many main turn ends older than its
+// last write is stale: a compaction from it would resume at an out-of-date next action.
+const MAX_TURNS_BEHIND = 3
+// $.state, not mem: a hot reload starts mem over, and an old checkpoint would count as just written.
+const AGE = { plugin: 'story-workflow', key: 'checkpointAge' } as const
 // A repo path can hold spaces, so a path group is never \S+.
 const SENTINEL = /^CHECKPOINT-READY:\s*(.+?)\s*\|\s*(continue|wait)\s*$/
 
@@ -53,6 +58,7 @@ type Pending = { w: Where; since: number; mtimeMs: number; token: number; isComp
 const mem: {
   promptedFor?: number
   toastedFor?: number
+  staleFor?: number
   isBusy: boolean
   isCompacting: boolean
   personPromptAt: number
@@ -171,6 +177,23 @@ const isFresh = async ($: $, path: string, crossed: number) => {
   return Math.floor(stat.mtimeMs / 1000) >= crossed
 }
 
+const mtimeOf = async ($: $, path: string) => ((await $.fs.exists(path)) ? (await $.fs.stat(path)).mtimeMs : 0)
+
+/** Counts this main turn end against the state file: 0 when the file changed since the last count. */
+const countTurn = async ($: $, path: string) => {
+  const mtimeMs = await mtimeOf($, path)
+  const { value } = await $.state.get(AGE)
+  const turns = value?.path === path && value.mtimeMs === mtimeMs ? value.turns + 1 : 0
+  await $.state.set(AGE, { path, mtimeMs, turns })
+  return turns
+}
+
+/** The counted turn ends of the state file, 0 when it changed after the last count. */
+const turnsBehind = async ($: $, path: string) => {
+  const { value } = await $.state.get(AGE)
+  return value?.path === path && value.mtimeMs === (await mtimeOf($, path)) ? value.turns : 0
+}
+
 const sentinel = (text: string) => {
   const lines = text.trimEnd().split('\n')
   const m = SENTINEL.exec(lines[lines.length - 1] ?? '')
@@ -281,8 +304,7 @@ const tryCompact = async ($: $, w: Where, since: number, tries: number, last = '
     await fail($, `compaction did not start after ${tries + 1} tries, so the backstop compacts later: ${why}`)
   }
   if (mem.isBusy) return retry('a turn is running', '')
-  const mtimeMs = (await $.fs.exists(w.state)) ? (await $.fs.stat(w.state)).mtimeMs : 0
-  mem.resume = { w, since, mtimeMs, token: 0 }
+  mem.resume = { w, since, mtimeMs: await mtimeOf($, w.state), token: 0 }
   let done
   try {
     done = await compactNow($, w)
@@ -301,11 +323,12 @@ const tryCompact = async ($: $, w: Where, since: number, tries: number, last = '
   if (!done.isQueued) compacted($)
 }
 
-// A turn or a person's prompt in the delay before this runs wins. promptedFor is
-// cleared, so the next turn end asks again.
+// A turn or a person's prompt in the delay before this runs wins. promptedFor and
+// staleFor are cleared, so the next turn end asks again.
 const runCheckpoint = async ($: $, since: number) => {
   if (mem.isBusy || mem.personPromptAt >= since) {
     mem.promptedFor = undefined
+    mem.staleFor = undefined
     return
   }
   const names = (await $.command.list()).map(c => c.name)
@@ -326,6 +349,7 @@ const tick = async ($: $) => {
   const config = await readConfig($)
   if (config === undefined) return
   const w = await where($)
+  const turns = await countTurn($, w.state)
   const limit = config.checkpointPercent ?? DEFAULT_PERCENT
   const percent = await percentOf($)
   const { shown, save } = await shownOf($, limit)
@@ -347,6 +371,14 @@ const tick = async ($: $) => {
 
   if (await isFresh($, w.state, crossed)) {
     if (mem.isCompacting) return
+    if (turns > MAX_TURNS_BEHIND) {
+      const mtimeMs = await mtimeOf($, w.state)
+      if (mem.staleFor === mtimeMs || (await hasDraft($))) return
+      mem.staleFor = mtimeMs
+      await log($, `${w.state} is ${turns} turns behind, so /checkpoint runs again before the compaction`)
+      $.clock.after(RETRY_MS, () => void runCheckpoint($, endedAt))
+      return
+    }
     mem.isCompacting = true
     $.clock.after(RETRY_MS, () => void tryCompact($, w, endedAt, 0))
     return
@@ -419,6 +451,12 @@ export const register: Register = on => {
     const done = await next({ ...e, instructions: merged })
     // A throw here would make the .catch below run the compaction a second time.
     try {
+      const r = mem.resume
+      const turns = r === undefined ? 0 : await turnsBehind($, r.w.state)
+      if (r !== undefined && turns > MAX_TURNS_BEHIND) {
+        mem.resume = undefined
+        await log($, `${r.w.state} is ${turns} turns behind at the compaction, so the session does not resume from it`)
+      }
       compacted($)
     } catch (err) {
       await log($, `the resume after the compaction was not armed: ${String(err)}`)
