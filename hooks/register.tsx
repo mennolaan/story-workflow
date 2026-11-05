@@ -304,6 +304,13 @@ const tryCompact = async ($: $, w: Where, since: number, tries: number, last = '
     await fail($, `compaction did not start after ${tries + 1} tries, so the backstop compacts later: ${why}`)
   }
   if (mem.isBusy) return retry('a turn is running', '')
+  // A turn can end while the retries wait, and the checkpoint gets older.
+  const turns = await turnsBehind($, w.state)
+  if (turns > MAX_TURNS_BEHIND) {
+    mem.isCompacting = false
+    mem.resume = undefined
+    return refresh($, w, turns, await $.clock.now())
+  }
   mem.resume = { w, since, mtimeMs: await mtimeOf($, w.state), token: 0 }
   let done
   try {
@@ -344,6 +351,15 @@ const runCheckpoint = async ($: $, since: number) => {
   }
 }
 
+/** A fresh checkpoint more than MAX_TURNS_BEHIND turns behind: runs /checkpoint again, once per write of the file. */
+const refresh = async ($: $, w: Where, turns: number, since: number) => {
+  const mtimeMs = await mtimeOf($, w.state)
+  if (mem.staleFor === mtimeMs || (await hasDraft($))) return
+  mem.staleFor = mtimeMs
+  await log($, `${w.state} is ${turns} turns behind, so /checkpoint runs again before the compaction`)
+  $.clock.after(RETRY_MS, () => void runCheckpoint($, since))
+}
+
 const tick = async ($: $) => {
   const endedAt = await $.clock.now()
   const config = await readConfig($)
@@ -371,14 +387,7 @@ const tick = async ($: $) => {
 
   if (await isFresh($, w.state, crossed)) {
     if (mem.isCompacting) return
-    if (turns > MAX_TURNS_BEHIND) {
-      const mtimeMs = await mtimeOf($, w.state)
-      if (mem.staleFor === mtimeMs || (await hasDraft($))) return
-      mem.staleFor = mtimeMs
-      await log($, `${w.state} is ${turns} turns behind, so /checkpoint runs again before the compaction`)
-      $.clock.after(RETRY_MS, () => void runCheckpoint($, endedAt))
-      return
-    }
+    if (turns > MAX_TURNS_BEHIND) return refresh($, w, turns, endedAt)
     mem.isCompacting = true
     $.clock.after(RETRY_MS, () => void tryCompact($, w, endedAt, 0))
     return
