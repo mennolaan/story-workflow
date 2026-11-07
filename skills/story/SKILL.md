@@ -20,7 +20,10 @@ This session is the **orchestrator** of one story. It asks the user every questi
 | implement, track | orchestrator, `fresh`, at the plan gate in parallel mode | own, `{{TRACK_BRANCH}}` from `{{BASE_SHA}}` | the tasks of its track, local commits, `<slug>.d/status-<track>.md` | no |
 | pr-review | orchestrator, `fresh`, after the PR opens | own, detached at the PR head | `<slug>.d/pr-review-docket.md` | no |
 
-Handoff sessions run `claude-opus-5-5` at `high`, in the orchestrator's permission mode. A session in another permission mode holds incoming messages for approval.
+The orchestrator selects a model and effort for each handoff using "Model routing
+and session size" below. Never inherit the orchestrator's model by omission.
+Handoffs use the orchestrator's permission mode. A session in another permission
+mode holds incoming messages for approval.
 
 ## Files
 
@@ -28,6 +31,9 @@ All sessions of a story share the `.plans/` folder of the main checkout: `$(dirn
 
 - `<slug>.md`: the plan, its `## Review`, then `## Implementation status`.
 - `<slug>.d/ledger.md`: the orchestrator ledger (template: `ledger.md` beside this file).
+- `<slug>.d/routing.json`: task profiles, context estimates and reasons, proposed by the planner and finalized by the orchestrator.
+- `<slug>.d/acceptance.json`: approved criteria and verification scenarios, frozen by the orchestrator before implementation (`review.md`).
+- `<slug>.d/reviews/<scope>/`: captured check logs, findings, judge decisions and review events. Protected receipts/contract live under `.sessions/review-<slug>/`.
 - `<slug>.d/<role>.md`: the checkpoint of each role (`/checkpoint`). A track session writes `<slug>.d/implement-<track>.md`.
 - `<slug>.d/status-<track>.md`: the implementation status of one track. Only its track session writes it.
 - `<slug>.d/compact/`: each compaction summary, the state copies and `log.tsv`.
@@ -47,14 +53,15 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
    - Read the config file that it prints. It fills the placeholders below.
    - Run `claude --version` and show the version. The context-keeper mod needs 2.1.308 or later. Below that, or when `claude` is not on PATH, say that the mod may not run and the backstop compacts instead.
 1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`. When it refuses because the backstop is off, stop and show the user its message.
-2. Read the story and its tasks with the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`). Its prompt holds `{{BOARD_SHOW}}` and asks for each child task. Use its digest.
+2. Read the story and its tasks with the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`, `effort: "low"`). Its prompt holds `{{BOARD_SHOW}}` and asks for each child task. Use its digest.
 3. Write `<slug>.d/ledger.md` from the template. Set the session title.
 4. Ask scope questions only when the board leaves a real gap.
 5. Start the plan session with `briefs/plan.md`, filled in.
 
 ## Starting a handoff session
 
-- `start_session` with `context: "fresh"`, its own worktree, `model: "claude-opus-5-5"`, effort `high`.
+- Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-route.sh" <role> [<routing.json> <task,task,...>]` first. Use its `model` and `effort` explicitly in `start_session`, with `context: "fresh"` and its own worktree. Use the live tool schema for the effort parameter; a sentence in the brief does not set it. If the host cannot set a value, report the mismatch and resolve it before starting work. Never silently fall back to Opus.
+- Verify the model and effort from the created session's configuration/usage tools when exposed. Record requested and observed settings in the ledger; otherwise record `unverified`. Recheck on resume, `/clear`, fallback or escalation. The resolver checks its shell environment only: inspect the effective Desktop environment and managed settings too.
 - The brief is the matching file in `briefs/`, with every `{{...}}` filled in. The orchestrator id is `$CLAUDE_CODE_HOST_SESSION_ID` in this session.
 - Record the child (name, id, role, state) in the ledger at once. Then run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --adopt <child id>`. The guard resets only an adopted child with `clear_session` and no prompt.
 - **Unpushed branch.** `start_session` with `source_branch` cuts the worktree from `origin/<branch>` when that remote ref exists (live check, 2026-10-27). Before you start a session from a feature branch with unpushed commits, give a local-only branch (no remote ref) as `source_branch`, or push first after the user's go.
@@ -67,15 +74,17 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 | `{{PLANS}}` | the absolute path of the shared `.plans/` folder |
 | `{{PLUGIN}}` | `${CLAUDE_PLUGIN_ROOT}`, the root folder of this plugin |
 | `{{ORCHESTRATOR_ID}}` | `$CLAUDE_CODE_HOST_SESSION_ID` of this session |
+| `{{EXECUTION_POLICY}}` | the route's model, effort, reason, estimated context/target, sizing warnings, owned tasks, escalation trigger, and "prefer independent parallel handoffs; checkpoint and compact when needed" |
 | `{{BASE}}` | `baseBranch` of the config, for example `development` |
 | `{{BRANCH}}` | `branch` of the config, with `{id}` the work item id and `{slug}` the short name |
 | `{{BOARD_SHOW}}` | `board.show` of the config, with `{id}` filled in. Only the story-reader agent runs it. |
 | `{{PR_CREATE}}` | orchestrator only: `pr.create` of the config, with `{branch}`, `{base}`, `{ids}`, `{title}` and `{description}` filled in |
 | `{{REVIEW_PLAN}}` | `review.plan` of the config, with `{plan}` the absolute plan path |
 | `{{REVIEW_CHANGES}}`, `{{REVIEW_PR}}` | `review.changes` and `review.pr` of the config |
+| `{{REVIEW_BASE_SHA}}` | the immutable original base commit for foundation/integrated review, read before implementation starts; for a track use `{{BASE_SHA}}` |
 | `{{REVIEW_FALLBACK}}` | `review.fallback` of the config: the command to run when the review command stops because a tool it needs is missing |
 | `{{CONVENTIONS}}` | `conventions` of the config: the file that holds the conventions and checks of the repo. Default `CLAUDE.md` |
-| `{{STORY_NOTES}}` | how to read the story: the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`) with `{{BOARD_SHOW}}` in its prompt, plus what the user said about scope |
+| `{{STORY_NOTES}}` | how to read the story: the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`, `effort: "low"`) with `{{BOARD_SHOW}}` in its prompt, plus what the user said about scope |
 | `{{SCOPE}}` | the plan's order of work that this session owns, and what it must not do yet |
 | `{{PR_URL}}`, `{{BOARD_PATHS}}` | the PR link; the design board paths, or "none" |
 | `{{PHASES}}` | implement only: one numbered line per phase, from the plan's order of work, as `<n>. #<task id> <title>. Done when: <check>.` One board task per line. The last line is the review phase, which ends with `DOCKET`. In parallel mode ("Parallel tracks"): for the story-branch session the foundation tasks, `#{{STORY_ID}} Merge the tracks`, the integrate tasks and the review; for a track the tasks of the track, and the last one ends with `DONE {{TRACK_BRANCH}} <sha>`. |
@@ -90,15 +99,83 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 ## Flow
 
 1. **Plan.** The plan session writes the plan, runs `{{REVIEW_PLAN}}` on the first full proposal, folds in the accepted findings and ends with `PLAN READY <path>`.
-2. **Plan gate.** Read the plan summary and its `## Review`. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
+2. **Plan gate.** Read the plan summary and its `## Review`. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-route.sh" --check "<plan path>" "<routing.json>"`. It checks exact manifest coverage and budgets every safe group and the story-branch scope (the entire story in sequential mode). On invalid input or conflicting settings send the reason back and start nothing. Sizing warnings are advisory: prefer more independent handoffs when they reduce elapsed time and total tokens; otherwise record why the scope stays together and allow checkpoint/compaction. If the user chooses sequential mode after a parallel proposal, rerun `story-route.sh implement <manifest> <all ids including merge,review>` to assess its combined size. Review the planner's profiles and reasons, especially requests for Opus or high effort. Read `review.md`, check each acceptance criterion and its verification scenario, and incorporate any scope decisions. After those decisions are settled, run `story-review.sh freeze <slug> <acceptance.json>` as orchestrator immediately before implementation starts. The freeze verifies safe-group membership and exact task coverage. Record the contract hash in the ledger. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
 3. **Implement.** Stop the plan session. In sequential mode, start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification of the repo's CLAUDE.md, commits locally, runs `{{REVIEW_CHANGES}}` and ends with `DOCKET <path>`. In parallel mode, start the story-branch session and the tracks ("Parallel tracks"). The story-branch session merges the tracks, runs the integrate tasks and the review, and ends with `DOCKET <path>`.
 4. **Docket.** Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
 5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `{{PR_CREATE}}` here. When the config has no `pr.create`, ask the user how to open the PR. Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
 6. **Close.** Unbind each child (`"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --unbind <child id>`), then this session (`story-bind.sh --unbind`). A binding outlives `/clear`, because its key is the host id, so a session reused after the story keeps its role until it is unbound. Report the result and the next steps. Set the title to `✅ <title>`.
 
+## Model routing and session size
+
+The orchestrator chooses the cheapest profile adequate for the work, considering
+ambiguity, risk, verification and expected retries. The planner proposes task
+profiles in `<slug>.d/routing.json` (`briefs/plan.md`). The resolver validates the
+manifest and repo overrides and emits launch settings. It does not launch or
+reconfigure sessions: applying and checking its output is the orchestrator's job.
+
+| Work | Default | Escalate when |
+|---|---|---|
+| Planning, architecture, conflicting requirements | Opus/high | a bounded hard problem needs deeper reasoning; give evidence before xhigh/max |
+| Clearly specified implementation and test writing | Sonnet/medium | reproducible reasoning failure or newly discovered ambiguity |
+| Review and judging findings | Sonnet/high | security, concurrency or cross-system reasoning warrants Opus/high |
+| Fetch/extract wiki, Confluence, docs or board facts | Haiku/low | extraction is incomplete; synthesis returns to the planner |
+| Execute prescribed checks and extract failures | Haiku/low | diagnosis or test design is required; return it to the implementer |
+
+For plan and PR review, `story-route.sh plan` / `story-route.sh pr-review` resolve
+role defaults; include manifest task ids when scope estimates are available.
+Implementation must pass the manifest and the exact owned ids. Include `merge`
+and `review` for the story branch; those rows ensure its final review is routed
+at least Sonnet/high. A track selects the strongest model and effort of its
+tasks. Avoid bundling a Haiku task into an Opus handoff when a short subagent can
+return evidence instead. No default uses xhigh/max.
+
+Use `story-workflow:source-reader` for named wiki/docs retrieval and
+`story-workflow:test-runner` for exact check commands, with explicit Agent
+model/effort from the resolved route (defaults: `model: "haiku"`, `effort: "low"`;
+use the family alias when the Agent schema requires it). Board reads always use
+`story-workflow:story-reader` with `model: "haiku"`, `effort: "low"`; the existing
+board gate keeps that agent on Haiku even when other profiles are overridden. Resolve `reader` / `verification` first
+to catch environment overrides. These narrow subagents return bounded evidence,
+not decisions. Run local checks directly when delegation would add more work;
+spawning a model does not make a deterministic test command run faster. Do not
+delegate source writes to a test runner. Use Sonnet for test design or routine
+failure diagnosis; Opus requires a specific hard reasoning problem.
+
+The default handoff context target is 200k, including an estimated 100k startup.
+`routing.startupTokens` and `routing.targetSessionTokens` are repo settings. Measure
+actual startup and reduce it by trimming instructions, MCP payloads and brief
+content. `story-route.sh` sets the advisory target no higher than the model's
+checkpoint or 85% of the configured backstop. It sums task input/work estimates
+once per session and reports `sizing`, `compactionLikely` and `warnings`. These
+estimates guide planning; they are not a launch cap, live context meter or spend
+limit. A large estimate warns without blocking the handoff.
+
+Prefer more small, independent sessions running in parallel over a few long
+sessions that repeatedly checkpoint and compact. Compare total elapsed time and
+tokens, including startup, duplicated context, handoff/merge overhead, compaction
+and rereading saved state. Split along real contracts and file ownership; do not
+invent independence to meet the target. Keep tightly coupled work together when
+splitting would add more overhead or serialize the same dependency chain.
+
+At phase boundaries, use actual context and remaining work to reassess the scope.
+Move genuinely independent, unstarted work to another handoff when useful; never
+create two writers for the same owned files. Continue the current session when
+it is the more efficient choice, using the existing checkpoint/compaction rules
+when needed. Crossing the planning target alone does not require `QUESTION`, a
+fresh successor or a pause. Ask the orchestrator about scope/ownership changes or
+capability failures, not merely about needing compaction. Record compactions and
+review repeated cycles as opportunities to improve future decomposition; a
+necessary compaction is not itself a failed handoff.
+
+Escalation uses `QUESTION` with failing evidence, attempts, remaining scope and
+the requested profile. Resolve missing tools, credentials and rate limits as
+operational blocks. For a capability failure, the orchestrator may raise effort
+one step or route the remaining work to the next model, record why, and verify
+the effective setting. Do not restart completed phases. No automatic retry loops.
+
 ## Parallel tracks
 
-After the plan gate, independent tasks can run in one implement session each. The story keeps one branch and one PR. The repo turns it on with `parallel.max` of the config (default 1, off). `parallel.shared` lists globs of shared or generated files, for example lockfiles.
+After the plan gate, independent tasks can run in one implement session each. The story keeps one branch and one PR. The repo turns it on with `parallel.max` of the config (default 1, off; the example opts in to 10). Prefer many bounded independent tracks over a few long sessions. The cap is a ceiling, not a target: dependencies, shared files, local CPU/test resources and usage limits determine useful concurrency. `parallel.shared` lists globs of shared or generated files, for example lockfiles.
 
 ### Waves
 
@@ -118,7 +195,7 @@ With `MODE parallel`, show the user:
 - the groups: the foundation tasks, each track with its tasks and hours, the integrate tasks;
 - every `JOIN`, `REFUSE` and `MOVE` line with its reason;
 - the cap and the queue, as the `MODE` line prints them;
-- the cost: each track starts near 100k tokens, on top of the story-branch session.
+- each track's model, effort, rationale and estimated context/target and sizing warnings from the resolver; startup cost comes from configuration/measurement, not a fixed Claude Code constant.
 
 Then ask: "Start N tracks in parallel, or one session?". When the plan lists an open decision for the user, ask it in the same turn, and start nothing before the user has answered all of them. Record each answer in the user's words in the ledger. On "one session", run the sequential flow.
 
@@ -135,23 +212,51 @@ Every start happens in the turn of the user's answer. The app refuses `start_ses
 At each side-sessions event, for each child that ended a turn:
 - Track `PHASE DONE #<task> -`: the track has bound and waits for its base. Check its binding and title only. Record it as `waits for base` in `## Tracks`, and send nothing. When `## Tracks` already holds the base sha, send `next: #<first task> base <sha>` at once.
 - Story-branch `PHASE DONE #{{STORY_ID}} -`: it has bound and waits for the merge. Record it, and send nothing.
-- Story-branch `PHASE DONE #<last foundation task> <sha>`: the phase check. Record the sha as the base sha in `## Tracks`. Send each waiting track `next: #<first task> base <sha>`.
+- Story-branch `PHASE DONE #<last foundation task> <sha>`: the phase check, plus the `foundation` evidence/review gate of `review.md` in its worktree. Release no dependent track before that gate returns `REVIEW OK`. Record the sha as the base sha in `## Tracks`. Send each waiting track `next: #<first task> base <sha>`.
 - Track `PHASE DONE #<task> <sha>`: the phase check, plus `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" --scope "<plan path>" <track tasks> <base sha> <sha>` in the track's worktree. It must print `SCOPE ok`. A failed check is a deviation: send it back to the track, and ask the user only when the fix needs a plan change. Then send `next: #<next task>`.
-- Track `DONE <track branch> <sha>`: the same checks. Record the sha. Unbind the track and stop it.
+- Track `DONE <track branch> <sha>`: the same checks, plus `story-review.sh gate <slug> track-<name> <all assigned task ids> <base sha>` in that track's worktree. Accept only `REVIEW OK` or an approved `CHECKS ONLY`, and save the receipt. On failure keep the implementer available for fixes and leave other tracks running. On success record the sha, unbind the track and stop it.
 - Every other story-branch `PHASE DONE #<task> <sha>` (a foundation task that is not the last one, the merge, an integrate task), and `QUESTION`, `BLOCKED`, `CHECKPOINT`: as in "Status tokens".
+
+For a `BLOCKED` report with `REVIEW QUEUED`, keep that track in `review queue` and send `next: review` when a finder slot is free; do not rerun its implementation phases. Other tracks continue. A `REVIEW LIMIT` or `CHECK LIMIT` report goes to the orchestrator with exact evidence: resolve the cause or a real decision, never retry in a loop.
 
 Start queued tracks while fewer than `parallel.max` run. When the app refuses a start, keep the proposal card that the refusal offers. Record the track as `waits for the user` in the ledger, tell the user in one line which card to click, and set ❗. When every track is `DONE`, send the story-branch session `next: #{{STORY_ID}} merge`.
 
 The app wakes the orchestrator when every running child is idle, so the tracks move in rounds, one phase each. Balance the labels: a short phase waits for the longest phase of its round.
+Prefer a single bounded deliverable per track so most tracks finish in one work
+turn. This reduces the round barrier; routing alone cannot remove the host's
+wake-up and session-start restrictions. Use individual idle notifications when
+the live host supports them, while keeping every scope and phase check.
 
 ### The merge
 
-The story-branch session cherry-picks each track, in ledger order, onto `{{BRANCH}}` (`briefs/implement.md`, "Parallel mode"). The history stays linear, and each task commit keeps its message. A conflict means a claim was wrong: the session aborts the cherry-pick and ends with `BLOCKED`, and the orchestrator decides. Then the integrate tasks run as phases, and the review runs once, on the whole story branch. Tracks run no review panel. The track branches stay local.
+The story-branch session cherry-picks each track, in ledger order, onto `{{BRANCH}}` (`briefs/implement.md`, "Parallel mode"). The history stays linear, and each task commit keeps its message. A conflict means a claim was wrong: the session aborts the cherry-pick and ends with `BLOCKED`, and the orchestrator decides. Then the integrate tasks run as phases. Capture fresh whole-story evidence and run/gate the `integrated` scope with `all` (`review.md`), followed by any extra review the repo explicitly configures. Tracks run one focused finder by default, not the full repo panel. The track branches stay local.
 
 ### Turn it off
 
 - For one story: the user answers "one session" at the gate.
 - For the repo: `"parallel": {"max": 1}` in the config, or no `parallel` key.
+
+## Acceptance and review gates
+
+Read `review.md` for the executable evidence/review procedure. It uses the Codex
+CLI directly and works without installing a separate review plugin. Python 3 and
+an authenticated Codex CLI are required for this path. `handoffReview` sets the
+finder model/effort, concurrency, timeout and round/check-failure limits. These
+are separate from Claude handoff routing and the implementation concurrency cap.
+
+Review shared foundation before releasing dependent tracks; review each completed
+substantive handoff while other tracks keep working; review the integrated story
+against every criterion and its runtime wiring. Preserve the implementing session
+until its review gate is accepted so fixes do not require reconstructing context.
+A checkpoint or a small phase report does not itself trigger another finder.
+Approved trivial tracks may use `checksOnly` with captured evidence and a reason.
+
+The orchestrator does not judge raw findings. It checks the machine-readable
+receipt in the owned worktree before accepting `DONE`, and before the docket/push
+step for the `integrated` scope. The implementation session validates findings,
+fixes accepted defects and records supported false-positive dismissals. A changed
+revision, base, contract or check record invalidates prior approval. Configured
+additional panels retain their repo policy and are not silently substituted.
 
 ## Status tokens (child to orchestrator)
 
@@ -167,7 +272,7 @@ The first line of a child's `wrap_up` recap is one token. The side-sessions even
 | `READY TO PUSH <branch> <sha>` | the push step |
 | `BLOCKED` | reads the reason, removes the block or asks the user |
 | `CHECKPOINT` | nothing while the child's context drops (`get_usage`). If it stays high (no mod), `clear_session` the child and send `Continue from <state path>`. |
-| `DONE` | records it, unbinds the child (`story-bind.sh --unbind <child id>`), stops the session. A track sends `DONE <track branch> <sha>`: the phase check first, then record the sha in `## Tracks`. Do not archive a track before the story PR is open: its branch is the only copy of its work. |
+| `DONE` | records it, unbinds the child (`story-bind.sh --unbind <child id>`), stops the session. A track sends `DONE <track branch> <sha>`: the phase/scope checks and its acceptance/review gate first, then record the sha in `## Tracks`. Do not archive a track before the story PR is open: its branch is the only copy of its work. |
 
 When you relay an approval, quote the user's words.
 
@@ -238,7 +343,7 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
 
 The save point is `checkpointPercent` (35) of the model window: 350k tokens for a 1M model (Opus 5.5, Fable). The desktop composer and `/context` show percent of `autoCompactWindow` (432000), so the save point shows as 81% there and the backstop compaction starts at 92%.
 
-Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. A story session starts near 100k tokens, so on a 200K window no compaction gets below the save point.
+Steps 1, 2, 4, 5 and 7 run only on a context window of 400k tokens or more. The original setup measured startup near 100k tokens; at that size a 200K window cannot compact below the save point. Measure startup for the consuming repo rather than assuming this overhead for every session.
 
 1. **Nudge.** `context-guard.sh` (PostToolUse) adds one note per crossing: run `/checkpoint` at the next safe moment.
 2. **Gate.** The same script (Stop) blocks the end of the turn once while the checkpoint is stale.

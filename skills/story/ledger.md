@@ -17,8 +17,37 @@ Mode: sequential | parallel (the user's words at the gate)
 
 ## Linked sessions
 
-| Name | Id | Role | State | Started (UTC) |
-|---|---|---|---|---|
+| Name | Id | Role | State | Model | Effort | Reason | Estimated context / target | Started (UTC) |
+|---|---|---|---|---|---|---|---|---|
+
+Record requested and observed model/effort separately when they differ. Include
+the routing manifest path and any environment or host override. Never mark a
+requested setting as verified from the brief alone.
+
+## Routing and usage
+
+- Manifest: {{PLANS}}/{{SLUG}}.d/routing.json
+- Before each start: route JSON, selected profile(s), reason and escalation trigger.
+- Sizing decisions: independent work split into additional parallel handoffs, or
+  reason coupled work stays together. Compare startup/coordination costs with
+  expected compaction and rereading overhead. A sizing warning is advisory.
+- At completion: elapsed time, peak context, billed input/output/cache tokens when
+  available, compactions, retries and accepted result. Write `unavailable` for
+  metrics the host does not expose. Peak context is not cumulative token spend.
+- Escalations: session/task, failure evidence, old and new model/effort, remaining
+  scope. Escalate once after a reproducible capability failure; do not repeat the
+  same failing attempt or escalate a missing credential/dependency.
+
+## Acceptance and review
+
+- Frozen contract path/hash; original review base sha.
+- Each foundation/track/integrated scope: task ids, reviewed head/tree, check
+  records, initial/final findings, judge dismissals with reasons/evidence, receipt.
+- Queue/limits: running finder count, queued scopes and retry-only next action;
+  stop cause at the round/check limit. Never hide a missing/failed review as pass.
+- Criteria still unverified, including browser/database proof.
+- Lessons worth retaining: observed failure, cause and one concrete improvement;
+  link to detail rather than loading every session's retrospective.
 
 ## Tracks
 

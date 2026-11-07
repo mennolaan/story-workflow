@@ -7,6 +7,8 @@
   "pr": { "create": "gh pr create --draft --base {base} --head {branch} --title {title} --body {description}" },
   "guard": { "deny": [], "denyTools": [] },
   "planBoundary": false,
-  "parallel": { "max": 3, "shared": ["**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "CHANGELOG.md"] },
+  "parallel": { "max": 10, "shared": ["**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "CHANGELOG.md"] },
+  "routing": { "startupTokens": 100000, "targetSessionTokens": 200000 },
+  "handoffReview": { "effort": "high", "maxRounds": 2, "maxParallel": 3, "timeoutSeconds": 600, "maxCheckFailures": 2 },
   "conventions": "CLAUDE.md"
 }

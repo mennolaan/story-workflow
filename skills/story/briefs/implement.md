@@ -1,5 +1,20 @@
 You are the IMPLEMENT session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks {{TASKS}}. Your orchestrator is `{{ORCHESTRATOR_ID}}`.
 
+## Execution policy
+{{EXECUTION_POLICY}}
+
+Stay within the assigned scope. Report capability failures or opportunities to
+move independent remaining work to parallel handoffs with `QUESTION`, evidence
+and remaining scope. The context target is advisory: continue efficiently and
+checkpoint/compact when needed using the existing rules. Crossing that target
+alone requires no pause or escalation. Never silently expand scope.
+Use `story-workflow:source-reader` for specified wiki/docs reads and
+`story-workflow:test-runner` for prescribed check commands when their bounded
+digests reduce context; resolve `"{{PLUGIN}}/hooks/story-route.sh" reader` /
+`verification` and pass the returned model/effort explicitly (defaults: Haiku/low;
+use the family alias when the Agent schema requires it). Test design and failure
+diagnosis stay here. Board reads still use story-reader.
+
 ## First steps
 1. Rename this session to `Implement · {{STORY_ID}} {{SHORT_TITLE}}` (`mcp__ccd_session_mgmt__set_session_title`, session `self`). Never put `❗` in it.
 2. Bind this session: `"{{PLUGIN}}/hooks/story-bind.sh" implement {{SLUG}} --parent {{ORCHESTRATOR_ID}}`.
@@ -18,6 +33,20 @@ You are the IMPLEMENT session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks
 ## Phases
 One phase per turn, in this order. One board task per phase.
 {{PHASES}}
+
+## Acceptance evidence and independent review
+Read `{{PLUGIN}}/skills/story/review.md`. The original review base is
+`{{REVIEW_BASE_SHA}}`; keep that commit unchanged throughout the scope.
+After the final foundation commit, capture its criterion checks and run/gate
+`foundation` with the exact foundation task ids before reporting its final
+`PHASE DONE`. Dependent tracks must not consume an unreviewed foundation.
+After integration (or sequential implementation), capture fresh checks for all
+criteria, including runtime wiring/end-to-end scenarios, then run/gate
+`integrated all {{REVIEW_BASE_SHA}}` before the docket. Record the receipt and
+per-criterion evidence in Implementation status. This local read-only Codex
+finder is authorized; unrelated paid runs remain forbidden. Do not describe
+unexecuted browser/database checks as passed. Review limits and queued finders
+use `BLOCKED` with the precise reason; other tracks continue.
 
 ## Parallel mode
 Only when the orchestrator runs the story in parallel tracks (`{{PLUGIN}}/skills/story/SKILL.md`, "Parallel tracks"). You are then the story-branch session. Track sessions run the track tasks on their own local branches at the same time.
