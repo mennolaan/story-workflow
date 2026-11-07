@@ -35,6 +35,25 @@ deny() {
 
 args=(plan); expect 'planning remains Opus/high' '.model == "claude-opus-5-5" and .effort == "high"'
 args=(pr-review); expect 'review starts Sonnet/high' '.family == "sonnet" and .effort == "high"'
+args=(requirements-review); expect 'requirements review starts Sonnet/medium' '.role == "requirements-review" and .family == "sonnet" and .effort == "medium"'
+args=(architect-review); expect 'conditional architecture review starts Sonnet/high' '.role == "architect-review" and .family == "sonnet" and .effort == "high"'
+args=(requirements-review --profile complex --effort high); expect 'orchestrator can escalate a difficult requirements question' '.family == "opus" and .effort == "high" and (.reason|contains("complex"))'
+args=(architect-review --profile review --effort medium); expect 'orchestrator can lower architecture effort independently of profile' '.family == "sonnet" and .effort == "medium" and (.reason|contains("effort override: medium"))'
+args=(requirements-review --profile requirements --effort high); expect 'requirements can use more effort without upgrading model' '.family == "sonnet" and .effort == "high"'
+args=(architect-review --profile complex --effort medium); expect 'architecture model and effort are independently selected' '.family == "opus" and .effort == "medium"'
+deny 'specialist effective effort conflicts are refused' 'overrides medium' CLAUDE_CODE_EFFORT_LEVEL=max
+deny 'specialist forced model conflicts are refused' 'forced subagent model' CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 CLAUDE_CODE_SUBAGENT_MODEL=haiku
+expect 'matching forced specialist model is allowed' '.family == "opus" and .effort == "medium"' CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 CLAUDE_CODE_SUBAGENT_MODEL=opus
+args=(requirements-review --profile typo); deny 'unknown specialist profile fails before launch' 'unknown specialist profile'
+args=(architect-review --effort typo); deny 'unknown specialist effort fails before launch' 'unsupported specialist effort'
+args=(architect-review --profile review --profile complex); deny 'duplicate profile cannot silently replace a decision' 'may appear only once'
+args=(requirements-review --effort medium --effort high); deny 'duplicate effort cannot silently replace a decision' 'may appear only once'
+args=(requirements-review --profile); deny 'missing specialist profile value fails' 'requires one nonempty value'
+args=(architect-review --effort ''); deny 'empty specialist effort fails' 'requires one nonempty value'
+args=(--profile requirements); deny 'specialist options without a role fail with usage on Bash 3.2' 'usage: story-route.sh'
+args=(plan --profile review); deny 'specialist selection cannot accidentally downgrade the plan role' 'only for requirements-review'
+args=(--check --effort high "${manifest}" "${manifest}"); deny 'specialist overrides cannot bypass preflight' 'only for requirements-review'
+args=(requirements-review "${manifest}" 2); deny 'specialists cannot be mixed into implementation scope estimates' 'not implementation task estimates'
 args=(verification); expect 'executing known tests is Haiku/low' '.family == "haiku" and .effort == "low"'
 args=(implement-track "${manifest}" 1); expect 'retrieval-only track can stay Haiku' '.family == "haiku" and .effort == "low"'
 args=(implement-track "${manifest}" 2); expect 'normal implementation uses Sonnet/medium' '.family == "sonnet" and .effort == "medium" and .estimatedContextTokens == 125000 and .sizing == "within-target" and .warnings == []'
@@ -63,6 +82,12 @@ deny 'unknown profiles fail' 'known profile'
 cp "${tmp}/original.json" "${manifest}"
 printf '{"routing":{"targetSessionTokens":150000,"startupTokens":20000,"profiles":{"implementation":{"effort":"low"}},"models":{"sonnet":{"id":"deployment-sonnet","window":200000}}}}\n' >"${cfg}"
 expect 'provider override retains family and a model-specific target' '.model == "deployment-sonnet" and .effort == "low" and .sessionTargetTokens == 70000 and .estimatedContextTokens == 45000'
+args=(requirements-review --profile requirements --effort high)
+expect 'specialist routes honor provider ids and context windows' '.model == "deployment-sonnet" and .effort == "high" and .sessionTargetTokens == 70000 and .estimatedContextTokens == 20000'
+printf '{"routing":{"profiles":{"requirements":{"family":"opus","effort":"high"}}}}\n' >"${cfg}"
+args=(requirements-review); expect 'repo policy can override requirements defaults' '.family == "opus" and .effort == "high"'
+args=(requirements-review --profile review --effort medium); expect 'explicit specialist selection can choose another configured profile' '.family == "sonnet" and .effort == "medium"'
+args=(implement-track "${manifest}" 2)
 printf '{"routing":{"models":{"sonnet":{"window":100000}}}}\n' >"${cfg}"
 expect 'smaller context window warns about compaction without blocking' '.sessionTargetTokens == 35000 and .compactionLikely == true and .sizing == "consider-splitting"'
 printf '{"backstopTokens":120000}\n' >"${cfg}"

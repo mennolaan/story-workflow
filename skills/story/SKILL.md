@@ -15,6 +15,7 @@ This session is the **orchestrator** of one story. It asks the user every questi
 |---|---|---|---|---|
 | orchestrator | the user, `/story <id>` | its own | the ledger; board, push, PR, cloud | yes, the only one |
 | plan | orchestrator, `fresh` | own, detached at `origin/{{BASE}}` | `<slug>.md` | no |
+| requirements/architect reviewer | orchestrator, optional Agent call | reads a bounded planning snapshot | returns findings only; no shared writes | no |
 | implement | orchestrator, `fresh`, after PLAN READY | own, `{{BRANCH}}` | code, local commits, `## Implementation status` | no |
 | implement, story branch | orchestrator, `fresh`, at the plan gate in parallel mode | own, `{{BRANCH}}` | the foundation and integrate tasks, every shared file, the merge, `## Implementation status` | no |
 | implement, track | orchestrator, `fresh`, at the plan gate in parallel mode | own, `{{TRACK_BRANCH}}` from `{{BASE_SHA}}` | the tasks of its track, local commits, `<slug>.d/status-<track>.md` | no |
@@ -33,6 +34,7 @@ All sessions of a story share the `.plans/` folder of the main checkout: `$(dirn
 - `<slug>.d/ledger.md`: the orchestrator ledger (template: `ledger.md` beside this file).
 - `<slug>.d/routing.json`: task profiles, context estimates and reasons, proposed by the planner and finalized by the orchestrator.
 - `<slug>.d/acceptance.json`: approved criteria and verification scenarios, frozen by the orchestrator before implementation (`review.md`).
+- `<slug>.d/planning-reviews/`: orchestrator-owned specialist input snapshots and reports (`planning-review.md`); the planner records dispositions in the plan.
 - `<slug>.d/reviews/<scope>/`: captured check logs, findings, judge decisions and review events. Protected receipts/contract live under `.sessions/review-<slug>/`.
 - `<slug>.d/<role>.md`: the checkpoint of each role (`/checkpoint`). A track session writes `<slug>.d/implement-<track>.md`.
 - `<slug>.d/status-<track>.md`: the implementation status of one track. Only its track session writes it.
@@ -55,8 +57,8 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`. When it refuses because the backstop is off, stop and show the user its message.
 2. Read the story and its tasks with the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`, `effort: "low"`). Its prompt holds `{{BOARD_SHOW}}` and asks for each child task. Use its digest.
 3. Write `<slug>.d/ledger.md` from the template. Set the session title.
-4. Ask scope questions only when the board leaves a real gap.
-5. Start the plan session with `briefs/plan.md`, filled in.
+4. Read `planning-review.md`. Decide whether requirements review is useful now and whether architecture review should wait for the draft. Record run/skip/defer reasons in the ledger. Fetch missing facts through the cheap readers first. Resolve genuine scope questions from existing authority or the user. If selected now, run the requirements reviewer with explicit resolved model/effort and retain its findings for the planner.
+5. Start the plan session with `briefs/plan.md`, filled in, plus any intake specialist report and scope decisions.
 
 ## Starting a handoff session
 
@@ -98,8 +100,8 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 
 ## Flow
 
-1. **Plan.** The plan session writes the plan, runs `{{REVIEW_PLAN}}` on the first full proposal, folds in the accepted findings and ends with `PLAN READY <path>`.
-2. **Plan gate.** Read the plan summary and its `## Review`. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-route.sh" --check "<plan path>" "<routing.json>"`. It checks exact manifest coverage and budgets every safe group and the story-branch scope (the entire story in sequential mode). On invalid input or conflicting settings send the reason back and start nothing. Sizing warnings are advisory: prefer more independent handoffs when they reduce elapsed time and total tokens; otherwise record why the scope stays together and allow checkpoint/compaction. If the user chooses sequential mode after a parallel proposal, rerun `story-route.sh implement <manifest> <all ids including merge,review>` to assess its combined size. Review the planner's profiles and reasons, especially requests for Opus or high effort. Read `review.md`, check each acceptance criterion and its verification scenario, and incorporate any scope decisions. After those decisions are settled, run `story-review.sh freeze <slug> <acceptance.json>` as orchestrator immediately before implementation starts. The freeze verifies safe-group membership and exact task coverage. Record the contract hash in the ledger. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
+1. **Plan.** The plan session writes the draft and ends its Draft phase with `PHASE DONE`. Before advancing it, reassess both optional specialists using `planning-review.md`; choose run/skip and explicit model/effort for each. Run independent selected reviews in parallel on one snapshot, relay findings to the planner and settle real scope/design decisions. The planner reconciles findings, then runs `{{REVIEW_PLAN}}` on the final proposal, folds in accepted findings and ends with `PLAN READY <path>`.
+2. **Plan gate.** Read the plan summary, its `## Review` and `## Planning specialist review`. Match run/skip decisions and report snapshots to the ledger; resolve incomplete required reviews and blocking findings before freezing acceptance (`planning-review.md`). Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-route.sh" --check "<plan path>" "<routing.json>"`. It checks exact manifest coverage and budgets every safe group and the story-branch scope (the entire story in sequential mode). On invalid input or conflicting settings send the reason back and start nothing. Sizing warnings are advisory: prefer more independent handoffs when they reduce elapsed time and total tokens; otherwise record why the scope stays together and allow checkpoint/compaction. If the user chooses sequential mode after a parallel proposal, rerun `story-route.sh implement <manifest> <all ids including merge,review>` to assess its combined size. Review the planner's profiles and reasons, especially requests for Opus or high effort. Read `review.md`, check each acceptance criterion and its verification scenario, and incorporate any scope decisions. After those decisions are settled, run `story-review.sh freeze <slug> <acceptance.json>` as orchestrator immediately before implementation starts. The freeze verifies safe-group membership and exact task coverage. Record the contract hash in the ledger. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
 3. **Implement.** Stop the plan session. In sequential mode, start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification of the repo's CLAUDE.md, commits locally, runs `{{REVIEW_CHANGES}}` and ends with `DOCKET <path>`. In parallel mode, start the story-branch session and the tracks ("Parallel tracks"). The story-branch session merges the tracks, runs the integrate tasks and the review, and ends with `DOCKET <path>`.
 4. **Docket.** Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
 5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `{{PR_CREATE}}` here. When the config has no `pr.create`, ask the user how to open the PR. Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
@@ -115,7 +117,9 @@ reconfigure sessions: applying and checking its output is the orchestrator's job
 
 | Work | Default | Escalate when |
 |---|---|---|
-| Planning, architecture, conflicting requirements | Opus/high | a bounded hard problem needs deeper reasoning; give evidence before xhigh/max |
+| Planning, unresolved architecture, conflicting requirements | Opus/high | a bounded hard problem needs deeper reasoning; give evidence before xhigh/max |
+| Optional requirements/acceptance review | Sonnet/medium | a bounded independent check; orchestrator selects profile/effort (`planning-review.md`) |
+| Optional architecture review within established patterns | Sonnet/high | check contracts and independence; escalate unresolved design deliberately |
 | Clearly specified implementation and test writing | Sonnet/medium | reproducible reasoning failure or newly discovered ambiguity |
 | Review and judging findings | Sonnet/high | security, concurrency or cross-system reasoning warrants Opus/high |
 | Fetch/extract wiki, Confluence, docs or board facts | Haiku/low | extraction is incomplete; synthesis returns to the planner |
@@ -264,7 +268,7 @@ The first line of a child's `wrap_up` recap is one token. The side-sessions even
 
 | Token | The orchestrator does |
 |---|---|
-| `PHASE DONE #<task> <sha>` | the phase check, then `next: #<task>` ("Phased turns and steering") |
+| `PHASE DONE #<task> <sha>` | the phase check, then `next: #<task>` ("Phased turns and steering"); at the plan Draft boundary first resolve optional specialist selection/reviews using `planning-review.md` |
 | `PLAN READY <path>` | the plan gate |
 | `QUESTION` | answers from the plan, the repo's `{{CONVENTIONS}}`, the wiki, memory and the user's earlier answers. Escalates to the user only what none of those settle. |
 | `DOCKET <path>` | the docket step |
@@ -311,7 +315,7 @@ The context rule acts only at a turn boundary, and the orchestrator hears nothin
    - The last phase ends with the role's final token instead (`PLAN READY`, `READY FOR LIVE CHECKS`, `DOCKET`, `READY TO PUSH`).
 2. **The orchestrator sends the next go itself.** It asks the user nothing for it.
    - On the side-sessions event, check four things: the status line, the commit (`git log -1 <sha>` in the child's worktree), the child's context (`get_usage`) and any new deviation in the child's state section.
-   - Then send `next: #<task>` by the peer route (rule 3).
+   - At the plan Draft boundary, first resolve optional specialist run/skip decisions and any selected reviews (`planning-review.md`). Then send `next: #<task>` by the peer route (rule 3), including the reports and settled decisions.
    - Ask the user only when a deviation needs a decision that the plan does not settle.
    - When the child is at or above the save point (350k tokens for a 1M model) and its mod is not live, first ask it for `/checkpoint`. Then clear it (`clear_session`) and send `Continue from <state path>`.
 3. **Steer in the middle of a phase.**

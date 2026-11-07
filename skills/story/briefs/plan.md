@@ -5,6 +5,7 @@ You are the PLAN session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks {{TA
 2. Bind this session: `"{{PLUGIN}}/hooks/story-bind.sh" plan {{SLUG}} --parent {{ORCHESTRATOR_ID}}`.
 3. Read the story and its tasks with the story-reader agent: {{STORY_NOTES}}. Read the repo's {{CONVENTIONS}} and the docs the story touches.
 4. Your worktree is detached at `origin/{{BASE}}`. You change no tracked file.
+5. Read `{{PLUGIN}}/skills/story/planning-review.md`. The orchestrator alone selects and starts optional requirements/architect reviewers and chooses their model/effort. Use any supplied intake report; never start a duplicate specialist yourself.
 
 ## Execution policy
 {{EXECUTION_POLICY}}
@@ -18,12 +19,15 @@ One phase per turn, in this order. One board task per phase.
    - Read `{{PLUGIN}}/skills/story/review.md` and write `{{PLANS}}/{{SLUG}}.d/acceptance.json`: each claim task has a concrete handoff criterion; integration criteria prove the complete behavior is actually invoked. Name executable checks and expected results, plus any browser/database proof. Propose `checksOnly` only for genuinely trivial tracks with a reason. The orchestrator freezes this contract; you do not freeze or weaken it.
    - Run `"{{PLUGIN}}/hooks/story-groups.sh" "{{PLANS}}/{{SLUG}}.md"` and paste its output under the table. On exit 1, fix the table. On exit 2, fix the claims, or accept the safe grouping that it prints and say so in the text.
    - Verify every upstream fact against a live source and date it. Follow the research rules of the repo's {{CONVENTIONS}}.
+   - Add `## Planning specialist review`: record supplied intake findings and dispositions, or pending orchestrator selection at the draft boundary. Do not assume a skipped or incomplete review passed.
    - End the turn with recap first line `PHASE DONE #{{PLAN_TASK}} -`.
 2. `#{{PLAN_TASK}}` Review.
+   - Start only after the orchestrator has resolved each specialist to run/skip and relayed any reports and decisions (`planning-review.md`). Validate findings against sources and record accepted/rejected/deferred with evidence in `## Planning specialist review`. Incorporate accepted findings into claims, contracts, routing and acceptance scenarios before the configured panel. Send unresolved blocking/product decisions to the orchestrator with `QUESTION`; do not invent answers or freeze acceptance.
    - Run `{{REVIEW_PLAN}}` on the full proposal, with this focus text: "Check the claims table against the repo: a file a task must change that its row does not name, two rows that change one file, a T row that changes a shared or generated file, a dependency that the Depends column misses. Check session budgets, unnecessary bundling and model/effort choices against the routing manifest."
    - When `{{REVIEW_PLAN}}` stops because a tool it needs is missing, run `{{REVIEW_FALLBACK}}` with the same arguments instead. When `{{REVIEW_FALLBACK}}` is `none`, end the turn with recap first line `BLOCKED` and the reason.
    - When `{{REVIEW_PLAN}}` is `none`, skip the panel: the repo config has no review command. Write `Review skipped: .claude/story.json has no review command` in `## Review` and in your report.
    - Fold the accepted findings into the plan body. Write `## Review`: one line per finding with the verdict and the reason.
+   - If panel changes materially affect a specialist's reviewed requirements/contracts/ownership, request orchestrator reassessment before `PLAN READY`. Rerun `story-groups.sh` and `story-route.sh --check` on the final revised proposal. No pending specialist selection or unresolved blocking finding may silently pass.
    - End the turn with recap first line `PLAN READY {{PLANS}}/{{SLUG}}.md`.
 
 ## Claims table

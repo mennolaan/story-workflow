@@ -8,6 +8,7 @@ The plugin holds:
 - `/checkpoint`: saves the state of a session before a compaction or a `/clear`.
 - The story-reader agent: reads stories, tasks and issues on haiku and returns a digest.
 - The source-reader and test-runner agents: fetch named documentation sources and run prescribed checks on Haiku/low, returning bounded evidence.
+- Optional requirements-reviewer and architect-reviewer agents: challenge product/acceptance gaps and unresolved architectural boundaries before acceptance freezes. The orchestrator chooses whether to run them and resolves model/effort per invocation.
 - `hooks/story-route.sh`: validates task routing and context estimates, resolves explicit model/effort settings, and flags large handoffs for possible parallel decomposition.
 - `hooks/story-review.sh`: freezes approved acceptance criteria, captures revision-bound check evidence and runs bounded read-only Codex reviews for foundation, handoffs and the integrated story.
 - Hooks: a role guard for the child sessions, a board-read guard that keeps board reads in the story-reader agent, the context rule, the re-prime after a compaction, the compaction trail, and an optional plan-boundary reminder.
@@ -74,7 +75,7 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `board.reads` | Extra board read commands, as Perl regexes. They match like `guard.deny`, for example `^jira\\s+issue\\s+view\\b`. |
 | `board.readTools` | MCP tools that read the board, as Perl regexes. A regex must match the whole tool name, for example `mcp__github__(get_issue\|list_issues\|search_issues)`. Only the story-reader agent may call them. |
 | `pr.create` | The command that opens a draft PR. Placeholders: `{branch}`, `{base}`, `{ids}`, `{title}`, `{description}`. Without it the orchestrator asks you how to open the PR. |
-| `review` | Optional. `plan` (`{plan}` is the plan path), `changes`, `pr`, and `fallback` (run when the review command stops because a tool is missing). Without it the sessions skip the review and say so. |
+| `review` | Optional. `plan` (`{plan}` is the plan path), `changes`, `pr`, and `fallback` (run when the review command stops because a tool is missing). Without it sessions skip these configured panels and say so; optional planning specialists and scoped Codex gates still apply. |
 | `guard.deny` | Extra Perl regexes. The role guard splits a shell command into simple commands, removes the quotes, and joins the words of each simple command with single spaces. A regex that matches that text (with `/m`) denies the child session the command. It also sees the scripts that the command runs: `bash -c`, `eval`, `$(...)` and heredocs fed to a shell. A regex also matches argument text, so anchor it with `^` to match only a command, for example `^terraform\\s+apply\\b`. |
 | `guard.denyTools` | Extra MCP tool names, as Perl regexes. A regex must match the whole tool name, for example `mcp__github__.*`. The role guard denies a child session every call to a tool that matches one. |
 | `planBoundary` | `true` turns on the plan-boundary reminder and its stamp hook. Default `false`. |
@@ -99,6 +100,7 @@ and `review` overhead rows. Each row names `id`, `profile`, `inputTokens`,
 | `implementation` | Sonnet 5.5 | medium | specified features, writing tests, routine diagnosis |
 | `complex` | Opus 5.5 | high | difficult diagnosis, security/concurrency decisions |
 | `review` | Sonnet 5.5 | high | whole-story review and judging evidence |
+| `requirements` | Sonnet 5.5 | medium | bounded requirements and acceptance-gap review |
 | `retrieval` | Haiku 5.5 | low | fetch/extract named wiki, Confluence, docs or board facts |
 | `verification` | Haiku 5.5 | low | execute known commands and extract failure evidence |
 
@@ -134,6 +136,42 @@ visible in its environment; Desktop and managed settings still need verification
 Never treat a model name written into a brief as proof of the effective model.
 After one reproducible capability failure, route the remaining scope deliberately;
 do not retry blindly or escalate a missing credential to a larger model.
+
+### Optional planning specialists
+
+The orchestrator assesses requirements and architecture review at intake and
+again at the draft boundary. A clear routine story can skip both, with reasons
+in the ledger. Requirements review helps with ambiguous outcomes, conflicting
+rules and missing failure/acceptance scenarios. Architecture review is useful
+for unresolved cross-system contracts, migrations, security/concurrency risks
+or uncertain track independence. It concentrates on contracts and ownership
+that enable independent parallel implementation, rather than repeating planning.
+
+These are read-only subagents, not extra implementation sessions. The starting
+routes are Sonnet/medium for requirements and Sonnet/high for architecture;
+the orchestrator can select another profile and effort for each question:
+
+```bash
+hooks/story-route.sh requirements-review --profile requirements --effort high
+hooks/story-route.sh architect-review --profile complex --effort high
+```
+
+`--profile` and `--effort` apply only to these specialist roles. Profiles select
+the configured family and default effort; `--effort` independently overrides
+that effort. Existing provider/model overrides still apply. Pass the resolved
+settings explicitly to the Agent call; agent frontmatter is only a fallback.
+No default uses xhigh/max. No consuming-repo config migration is needed.
+
+The orchestrator saves bounded input snapshots/reports, records requested and
+observed settings (or `unverified`), and can run independent reviews in parallel.
+The planner validates findings and revises the plan/acceptance scenarios; real
+product decisions stay with the user. Selected reviews and blocking findings
+must be resolved before acceptance freeze. One initial pass and at most one
+focused correction check avoid review loops. Material scope/contract changes
+require reassessment. Configured plan panels and implementation Codex gates
+remain in place. Selection/completion is a workflow instruction, not an
+executable semantic gate; the routing helper only validates launch settings.
+See [the specialist protocol](skills/story/planning-review.md).
 
 The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. The orchestrator runs `story-bind.sh --adopt <child id>` after it starts a child, and only then does `clear_session` of that child run without a prompt: the guard also checks that the child's binding names the orchestrator as parent and carries its own file key. It also denies a child these MCP tools: `mcp__ccd_pr__*` except `get_status`, `start_session`, `move_to_cloud`, `clear_session`, the session tools that archive, delete, stop, detach, message or reconfigure a session, `set_session_title` for any session but its own, and the host tools that sync or clean up worktrees. `mcp__ccd_turn__*` and read-only tools stay open. Only the orchestrator acts outward.
 

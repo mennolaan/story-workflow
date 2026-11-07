@@ -49,6 +49,25 @@ requested setting as verified from the brief alone.
 - Lessons worth retaining: observed failure, cause and one concrete improvement;
   link to detail rather than loading every session's retrospective.
 
+## Planning specialists
+
+The orchestrator owns selection and launch settings; the planner owns finding
+dispositions in `## Planning specialist review` of the plan. These are optional
+read-only subagents, not extra track sessions. See `planning-review.md`.
+
+| Role | Intake decision and reason | Draft decision and reason | Profile / requested model / effort | Observed model / effort | Snapshot / report | Passes / state |
+|---|---|---|---|---|---|---|
+| requirements-reviewer | run / skip / defer | run / skip | | | | |
+| architect-reviewer | run / skip / defer | run / skip | | | | |
+
+- Record the exact question, task/criterion ids, input hashes and code revision.
+- Record elapsed time/usage when exposed; otherwise `unavailable`. One initial
+  pass and at most one focused correction check; further scope needs a recorded
+  orchestrator decision, not an automatic loop.
+- Link finding dispositions and user decisions; resolve incomplete required
+  reviews and blocking findings before acceptance freeze. Material scope or
+  contract changes require reassessment of affected conclusions.
+
 ## Tracks
 
 Parallel mode only. One row per `TRACK` line of `story-groups.sh`, in its order, which is the merge order. Base sha: <the sha the track branches start from>

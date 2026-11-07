@@ -2,6 +2,8 @@
 # Resolve a handoff's model, effort and estimated context before starting it.
 # Usage: story-route.sh <plan|implement|implement-track|pr-review|reader|verification>
 #                      [<routing.json> <task,task,...>]
+#        story-route.sh <requirements-review|architect-review>
+#                      [--profile <profile>] [--effort <level>]
 #        story-route.sh --check <plan.md> <routing.json>
 # --check validates coverage and budgets using the safe groups, including moves
 # and joins, from story-groups.sh. Sequential mode budgets the entire story.
@@ -17,7 +19,28 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "${here}/story-lib.sh"
 die() { printf 'story-route: %s\n' "$1" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die 'jq is not on PATH.'
+profile="" effort_override=""
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --profile)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "${profile}" ] || die '--profile requires one nonempty value and may appear only once.'
+      profile="$2"; shift 2 ;;
+    --effort)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "${effort_override}" ] || die '--effort requires one nonempty value and may appear only once.'
+      effort_override="$2"; shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+[ "${#args[@]}" -gt 0 ] || die 'usage: story-route.sh <role> [<routing.json> <task,task,...>]'
+set -- "${args[@]}"
 [ "$#" -eq 1 ] || [ "$#" -eq 3 ] || die 'usage: story-route.sh <role> [<routing.json> <task,task,...>]'
+case "$1" in
+  requirements-review|architect-review)
+    [ "$#" -eq 1 ] || die 'specialist reviews accept --profile/--effort, not implementation task estimates.' ;;
+  *)
+    [ -z "${profile}${effort_override}" ] || die '--profile/--effort are only for requirements-review and architect-review.' ;;
+esac
 cfg="$(story_config_file)"
 [ -f "${cfg}" ] || die "missing ${cfg}."
 if [ "$1" = --check ]; then
@@ -48,7 +71,8 @@ if [ "$#" -eq 3 ]; then
   manifest="$(cat "$2")"
 fi
 result="$(jq -en --slurpfile configs "${cfg}" --argjson manifest "${manifest}" \
-  --arg role "$1" --arg ids "${3:-}" -f "${here}/story-route.jq")" || die 'routing failed; fix the config or manifest before starting a session.'
+  --arg role "$1" --arg ids "${3:-}" --arg profile "${profile}" --arg effort "${effort_override}" \
+  -f "${here}/story-route.jq")" || die 'routing failed; fix the config or manifest before starting a session.'
 
 # The environment outranks explicit effort, including subagent frontmatter.
 effort="$(jq -r .effort <<<"${result}")"
@@ -56,7 +80,7 @@ if [ -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ] && [ "${CLAUDE_CODE_EFFORT_LEVEL}" != 
   die "CLAUDE_CODE_EFFORT_LEVEL=${CLAUDE_CODE_EFFORT_LEVEL} overrides ${effort}. Resolve the effective Desktop environment before launching."
 fi
 case "$1" in
-  reader|verification)
+  reader|verification|requirements-review|architect-review)
     if [ -n "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE}" != 0 ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE}" != false ]; then
       forced="${CLAUDE_CODE_SUBAGENT_MODEL:-}"
       model="$(jq -r .model <<<"${result}")"
