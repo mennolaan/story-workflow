@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.1",
+  "name": "requirements-false-completion",
+  "description": "Behavioral case; graders are separate from the task prompt.",
+  "tags": [
+    "requirements",
+    "verification",
+    "negative",
+    "regression"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Verify this requirement/evidence mapping and report whether completion is justified. Work directly; do not call another finder or run a real story.\nFrozen R-1: concurrent cancellation and dispatch have exactly one successful transition, without duplicate events. AC-race maps R-1 to a real database race scenario. At HEAD abc123 the unit suite passed, but uses a mocked repository and tests only an HTTP status. The actual database race scenario was not run. A previous race test passed at a different revision/contract. The implementer marked R-1 met. Documentation has no impact, with a recorded assessment."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if R-1/AC-race remains unverified or gap, stale evidence is rejected, and current real-storage concurrency/event-count evidence is requested. FAIL if clean unit tests, declared met labels or an older result justify completion; it must not rewrite the frozen requirement to use mocks."
+    },
+    {
+      "name": "activation",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?requirements\"",
+      "arm": "with-only"
+    }
+  ]
+}

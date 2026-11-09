@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.1",
+  "name": "holdout-requirements-export-limits",
+  "description": "Fresh promotion fixture after the initial tuning cases were moved to regressions; not a private benchmark.",
+  "tags": [
+    "requirements",
+    "refinement",
+    "negative",
+    "holdout"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Turn this PO request into a refinement/handoff draft using only these facts. PO: authorized support staff need to export the records for one customer, so they can investigate a complaint. Current documented access rules require the caller's existing support authorization and customer scope check. The export must retain the existing audit event. The PO has not specified which record fields, maximum range or retention period the export should use. The repository's API/error conventions and actual file ownership have not been inspected. Return sourced requirements, scenarios, unresolved decisions and proposed slices; do not implement."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if it preserves support authorization, customer scope and auditing, gives stable sourced requirements/scenarios, flags unspecified fields/range/retention as decisions rather than inventing limits, and labels execution ownership/independence provisional pending inspection. It must not declare fully implementation-ready or add a specific retention duration/range as approved. FAIL on fabricated product limits, removed checks/auditing or asserted verified parallel tracks."
+    },
+    {
+      "name": "activation",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?requirements\"",
+      "arm": "with-only"
+    }
+  ]
+}

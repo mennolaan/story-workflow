@@ -6,9 +6,12 @@ The plugin holds:
 
 - `/story <id>`: makes the session the orchestrator of one story.
 - `/checkpoint`: saves the state of a session before a compaction or a `/clear`.
+- `/documentation assess|update|verify <scope>`: checks plan/doc consistency, assigns doc ownership and verifies affected documentation with the integrated behavior.
+- `/requirements refine|verify <scope>`: turns sourced PO intent into testable requirements and derives requirement-to-evidence coverage at completion.
+- Native behavioral evals under `evals/`: outcome/process cases for every skill/agent, plus workflow preflight and routing decisions. See [evals/README.md](evals/README.md).
 - The story-reader agent: reads stories, tasks and issues on haiku and returns a digest.
 - The source-reader and test-runner agents: fetch named documentation sources and run prescribed checks on Haiku/low, returning bounded evidence.
-- Optional requirements-reviewer and architect-reviewer agents: challenge product/acceptance gaps and unresolved architectural boundaries before acceptance freezes. The orchestrator chooses whether to run them and resolves model/effort per invocation.
+- Optional requirements-reviewer, architect-reviewer and documentation-reviewer agents: challenge requirements, design boundaries and documentation/evidence gaps. The orchestrator chooses existing-owner work versus an agent/handoff and resolves model/effort per invocation.
 - `hooks/story-route.sh`: validates task routing and context estimates, resolves explicit model/effort settings, and flags large handoffs for possible parallel decomposition.
 - `hooks/story-review.sh`: freezes approved acceptance criteria, captures revision-bound check evidence and runs bounded read-only Codex reviews for foundation, handoffs and the integrated story.
 - Hooks: a role guard for the child sessions, a board-read guard that keeps board reads in the story-reader agent, the context rule, the re-prime after a compaction, the compaction trail, and an optional plan-boundary reminder.
@@ -101,6 +104,7 @@ and `review` overhead rows. Each row names `id`, `profile`, `inputTokens`,
 | `complex` | Opus 5.5 | high | difficult diagnosis, security/concurrency decisions |
 | `review` | Sonnet 5.5 | high | whole-story review and judging evidence |
 | `requirements` | Sonnet 5.5 | medium | bounded requirements and acceptance-gap review |
+| `documentation` | Sonnet 5.5 | medium | bounded documentation impact/consistency review |
 | `retrieval` | Haiku 5.5 | low | fetch/extract named wiki, Confluence, docs or board facts |
 | `verification` | Haiku 5.5 | low | execute known commands and extract failure evidence |
 
@@ -139,8 +143,8 @@ do not retry blindly or escalate a missing credential to a larger model.
 
 ### Optional planning specialists
 
-The orchestrator assesses requirements and architecture review at intake and
-again at the draft boundary. A clear routine story can skip both, with reasons
+The orchestrator assesses requirements, architecture and documentation review at intake and
+again at the draft boundary. A clear routine story can keep these reviews with the existing owner, with reasons
 in the ledger. Requirements review helps with ambiguous outcomes, conflicting
 rules and missing failure/acceptance scenarios. Architecture review is useful
 for unresolved cross-system contracts, migrations, security/concurrency risks
@@ -174,6 +178,41 @@ executable semantic gate; the routing helper only validates launch settings.
 See [the specialist protocol](skills/story/planning-review.md).
 
 The role guard always denies a child session `AskUserQuestion`, `git push`, `gh pr` and `gh issue` mutations, `gh api` writes, `az repos pr` and `az boards work-item` mutations, `az pipelines run` and `az pipelines build queue`. It checks the Bash tool and the terminal tool. It also denies a child session every write to the binding files in `.plans/.sessions/`: Edit, Write and NotebookEdit on a path there, and `rm`, `mv`, `cp`, `tee`, `truncate`, `ln`, `sed -i`, `>` or `>>` in a shell command. `story-bind.sh` refuses a child that unbinds itself or binds again with another role, story or parent. Only the orchestrator of a child unbinds it. The orchestrator runs `story-bind.sh --adopt <child id>` after it starts a child, and only then does `clear_session` of that child run without a prompt: the guard also checks that the child's binding names the orchestrator as parent and carries its own file key. It also denies a child these MCP tools: `mcp__ccd_pr__*` except `get_status`, `start_session`, `move_to_cloud`, `clear_session`, the session tools that archive, delete, stop, detach, message or reconfigure a session, `set_session_title` for any session but its own, and the host tools that sync or clean up worktrees. `mcp__ccd_turn__*` and read-only tools stay open. Only the orchestrator acts outward.
+
+## Documentation lifecycle, refinement and EDD
+
+New stories first assess documentation constraints and impact, then preserve PO
+intent in stable sourced requirements with observable positive/negative scenarios,
+explicit unknowns/exclusions and bounded execution slices. The planner owns
+`documentation.md` and `requirements.md` under the story folder. It puts docs in
+the claims table with one writer; shared guides and cross-track docs belong to
+integration. Approved changes, plan violations and stale/unverified sources need
+distinct dispositions. The skills work standalone as draft/report procedures too.
+
+Add `requirements` and `documentation` declarations to the acceptance contract;
+see [the schema/protocol](skills/story/review.md). The strict freeze validates
+reference coverage, including every criterion mapping to a sourced requirement.
+At completion, `story-review.sh trace <slug> integrated all <base-sha>` derives
+`traceability.json` from the current checks and independent review without an
+extra model call. Missing runtime/publication proof remains unverified. Existing
+contracts keep working but are labeled `TRACE LEGACY` until reassessed/migrated.
+
+The orchestrator chooses whether work stays with its existing owner or warrants
+an isolated read-only agent/owned handoff. Optional `documentation-review` starts
+Sonnet/medium and `requirements-verify` starts Sonnet/high; both accept per-call
+`--profile`/`--effort` and provider overrides through `story-route.sh`. Direct
+known checks and named-source retrieval need no expensive reasoning. No new
+consuming-repo config is required; effective host model/effort still needs checking.
+
+Evaluation-driven development means defining regression tasks, expected/forbidden
+behavior and graders before changing a policy/agent/skill, then checking process
+and outcomes against baseline and held-out cases. The native suite covers every
+agent and skill; deterministic Git/evidence/routing tests cover enforceable
+invariants. A native text eval does not certify full Desktop coordination or
+compaction. See [the eval run/coverage guide](evals/README.md), [research sources
+and limits](skills/requirements/research.md), and [the synthetic PO-to-handoff
+example](skills/requirements/examples/order-cancellation.md). No benchmark result
+is inferred from writing a case or passing a stubbed Codex fixture.
 
 ## Acceptance evidence and review
 
@@ -321,10 +360,10 @@ Priorities for further speed/cost work:
   are planner assertions; `--scope` verifies paths, not semantic independence or
   the exact edited region. Isolate test ports, databases and generated outputs as
   concurrency grows. Keep external review costs in the same accounting.
-- The bundled review panel's Codex runners inherit their own configuration;
-  Claude routing does not set their model/effort. The inspected local Codex
-  configuration used `high`, while a runner comment still mentions `max`.
-  Make review engine settings explicit in consuming repo commands and reserve
+- The bundled review panel pins every Codex deep/plan head to `gpt-6.1-sol`
+  and rejects other model overrides. Its default single-pass review inherits
+  its own Codex configuration; Claude routing does not set Codex model/effort.
+  Make reasoning effort explicit in consuming repo commands and reserve
   multi-head deep review for changes that warrant it.
 
 Official sources checked on 2026-11-07:

@@ -30,6 +30,7 @@ diagnosis stay here. Board reads still use story-reader.
 
 ## Scope
 {{SCOPE}}
+- Apply `{{PLUGIN}}/skills/documentation/SKILL.md` update/verify and `{{PLUGIN}}/skills/requirements/SKILL.md` verify within this track: preserve approved R ids, update claimed component docs, and capture linked scenario evidence. Shared docs stay with integration. A need for another agent/model/effort goes to the orchestrator; do not self-launch specialists or weaken acceptance.
 - Change only the files that your claim names. A file outside your claim is a deviation: ask in a `QUESTION` first.
 - Never change a shared file: a file that matches `parallel.shared` of the repo config, or a file of a foundation or integrate task, apart from a region that your own claim names (`path#region`). The story-branch session owns them.
 
@@ -70,4 +71,5 @@ One phase per turn, in this order. One board task per phase.
 ## Done
 - The tasks of your track are committed on `{{TRACK_BRANCH}}`, every check is green, and the scope check prints `SCOPE ok`.
 - Your status file lists commits, checks, criterion evidence, initial/final review findings, the accepted gate receipt, deviations and open points.
+- Include owned requirement ids, documentation obligations completed and explicit gaps/unexecuted scenarios. Whole-story traceability is derived after integration, not claimed from a partial track.
 - Your last turn ends with recap first line `DONE {{TRACK_BRANCH}} <short sha>`.

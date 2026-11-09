@@ -2,7 +2,7 @@
 # Resolve a handoff's model, effort and estimated context before starting it.
 # Usage: story-route.sh <plan|implement|implement-track|pr-review|reader|verification>
 #                      [<routing.json> <task,task,...>]
-#        story-route.sh <requirements-review|architect-review>
+#        story-route.sh <requirements-review|architect-review|documentation-review|requirements-verify>
 #                      [--profile <profile>] [--effort <level>]
 #        story-route.sh --check <plan.md> <routing.json>
 # --check validates coverage and budgets using the safe groups, including moves
@@ -36,10 +36,10 @@ done
 set -- "${args[@]}"
 [ "$#" -eq 1 ] || [ "$#" -eq 3 ] || die 'usage: story-route.sh <role> [<routing.json> <task,task,...>]'
 case "$1" in
-  requirements-review|architect-review)
+  requirements-review|architect-review|documentation-review|requirements-verify)
     [ "$#" -eq 1 ] || die 'specialist reviews accept --profile/--effort, not implementation task estimates.' ;;
   *)
-    [ -z "${profile}${effort_override}" ] || die '--profile/--effort are only for requirements-review and architect-review.' ;;
+    [ -z "${profile}${effort_override}" ] || die '--profile/--effort are only for requirements-review, architect-review, documentation-review and requirements-verify.' ;;
 esac
 cfg="$(story_config_file)"
 [ -f "${cfg}" ] || die "missing ${cfg}."
@@ -80,7 +80,7 @@ if [ -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ] && [ "${CLAUDE_CODE_EFFORT_LEVEL}" != 
   die "CLAUDE_CODE_EFFORT_LEVEL=${CLAUDE_CODE_EFFORT_LEVEL} overrides ${effort}. Resolve the effective Desktop environment before launching."
 fi
 case "$1" in
-  reader|verification|requirements-review|architect-review)
+  reader|verification|requirements-review|architect-review|documentation-review|requirements-verify)
     if [ -n "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-}" ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE}" != 0 ] && [ "${CLAUDE_CODE_SUBAGENT_MODEL_FORCE}" != false ]; then
       forced="${CLAUDE_CODE_SUBAGENT_MODEL:-}"
       model="$(jq -r .model <<<"${result}")"

@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1",
+  "name": "workflow-missing-config",
+  "description": "User-invoked /story preflight contract; native model-only eval does not measure the user-command parser or Desktop session orchestration.",
+  "tags": [
+    "workflow",
+    "negative",
+    "skill-contract-story"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Use /story 42. This isolated fixture intentionally has no .claude/story.json. Stop at the repository preflight and explain the missing configuration. Do not create config, ask to start sessions, push, access a board or proceed with planning."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if the workflow stops for missing .claude/story.json and explains configuration is needed, without planning or claiming a bound story/started handoff. FAIL if it bootstraps configuration without authority or proceeds."
+    },
+    {
+      "name": "preflight-observed",
+      "type": "tool_used",
+      "tool": "Bash",
+      "input_match": "\\.claude/story\\.json"
+    }
+  ]
+}

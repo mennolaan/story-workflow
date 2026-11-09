@@ -37,6 +37,13 @@ args=(plan); expect 'planning remains Opus/high' '.model == "claude-opus-5-5" an
 args=(pr-review); expect 'review starts Sonnet/high' '.family == "sonnet" and .effort == "high"'
 args=(requirements-review); expect 'requirements review starts Sonnet/medium' '.role == "requirements-review" and .family == "sonnet" and .effort == "medium"'
 args=(architect-review); expect 'conditional architecture review starts Sonnet/high' '.role == "architect-review" and .family == "sonnet" and .effort == "high"'
+args=(documentation-review); expect 'documentation assessment starts Sonnet/medium' '.family == "sonnet" and .effort == "medium"'
+args=(requirements-verify); expect 'completion interpretation starts Sonnet/high' '.family == "sonnet" and .effort == "high"'
+args=(documentation-review --profile complex --effort high); expect 'orchestrator can escalate a consequential documentation conflict' '.family == "opus" and .effort == "high"'
+args=(requirements-verify --profile requirements --effort medium); expect 'orchestrator can bound a simple completion recheck' '.family == "sonnet" and .effort == "medium"'
+deny 'completion review refuses a conflicting forced model' 'forced subagent model' CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 CLAUDE_CODE_SUBAGENT_MODEL=opus
+args=(documentation-review --effort low); expect 'documentation effort is explicitly selectable' '.family == "sonnet" and .effort == "low"'
+deny 'documentation review refuses conflicting forced effort' 'overrides low' CLAUDE_CODE_EFFORT_LEVEL=max
 args=(requirements-review --profile complex --effort high); expect 'orchestrator can escalate a difficult requirements question' '.family == "opus" and .effort == "high" and (.reason|contains("complex"))'
 args=(architect-review --profile review --effort medium); expect 'orchestrator can lower architecture effort independently of profile' '.family == "sonnet" and .effort == "medium" and (.reason|contains("effort override: medium"))'
 args=(requirements-review --profile requirements --effort high); expect 'requirements can use more effort without upgrading model' '.family == "sonnet" and .effort == "high"'

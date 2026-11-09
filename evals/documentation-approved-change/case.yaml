@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.1",
+  "name": "documentation-approved-change",
+  "description": "Behavioral case; graders are separate from the task prompt.",
+  "tags": [
+    "documentation",
+    "smoke"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Assess documentation impact for this story and draft plan. Work directly in this conversation and return a bounded report.\nPO decision D1 explicitly approves changing the public CLI default from 3 workers to 10. README.md#parallelism currently says default 3; architecture.md#scheduler permits a configurable ceiling and reserves shared files for integration. The plan changes src/config.ts and tests/config.test.ts but claims no documentation work. Track A and B both propose editing README.md. No external wiki is in scope. Sources above are complete fixture excerpts; no source fetch is needed."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if it classifies README's old default as an approved behavior change requiring a doc update, identifies the omitted documentation obligation and the competing README owners, and proposes one owner (integration or another explicit single writer) plus verification against the actual default. It must not reject the approved default solely because README says 3. FAIL on invented sources or on declaring docs current without changes."
+    },
+    {
+      "name": "activation",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?documentation\"",
+      "arm": "with-only"
+    }
+  ]
+}

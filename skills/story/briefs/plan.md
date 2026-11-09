@@ -6,6 +6,7 @@ You are the PLAN session for story #{{STORY_ID}} ("{{STORY_TITLE}}"), tasks {{TA
 3. Read the story and its tasks with the story-reader agent: {{STORY_NOTES}}. Read the repo's {{CONVENTIONS}} and the docs the story touches.
 4. Your worktree is detached at `origin/{{BASE}}`. You change no tracked file.
 5. Read `{{PLUGIN}}/skills/story/planning-review.md`. The orchestrator alone selects and starts optional requirements/architect reviewers and chooses their model/effort. Use any supplied intake report; never start a duplicate specialist yourself.
+6. Read `{{PLUGIN}}/skills/documentation/SKILL.md`, then `{{PLUGIN}}/skills/requirements/SKILL.md`. Assess documentation and refine/source the story before proposing execution slices. Work directly in this session unless the orchestrator delegates a bounded question; it alone chooses agent, model and effort.
 
 ## Execution policy
 {{EXECUTION_POLICY}}
@@ -15,8 +16,10 @@ One phase per turn, in this order. One board task per phase.
 1. `#{{PLAN_TASK}}` Draft.
    - Write the plan to `{{PLANS}}/{{SLUG}}.md`. Use that absolute path. List each decision the user must make under `## Open decisions`, or write "none".
    - Write the claims table first under `## Order of work`, then the phases (one per task, each with `Done when:`). See "Claims table".
+   - Write `{{PLANS}}/{{SLUG}}.d/documentation.md` and `requirements.md` using those skills: source coverage, contradictions/dispositions, stable R ids, acceptance scenarios, explicit unknowns/exclusions, single-writer documentation ownership and an eval/check plan. Declare unresolved blocking decisions; do not invent PO answers. For agent/skill/workflow changes, define behavioral eval fixtures and graders before revising the policy.
    - Write `{{PLANS}}/{{SLUG}}.d/routing.json` using "Routing and session size" below. Include a routing summary in the plan. The orchestrator owns the final model choice.
    - Read `{{PLUGIN}}/skills/story/review.md` and write `{{PLANS}}/{{SLUG}}.d/acceptance.json`: each claim task has a concrete handoff criterion; integration criteria prove the complete behavior is actually invoked. Name executable checks and expected results, plus any browser/database proof. Propose `checksOnly` only for genuinely trivial tracks with a reason. The orchestrator freezes this contract; you do not freeze or weaken it.
+   - New plans include `requirements` and `documentation` declarations in that contract. Map every source requirement to criteria, every criterion to a requirement and affected docs to owned tasks/verification criteria. A no-doc-impact assessment needs sources checked and a reason. Requirements readiness is separate from optimistic sizing; missing evidence/authority is not READY.
    - Run `"{{PLUGIN}}/hooks/story-groups.sh" "{{PLANS}}/{{SLUG}}.md"` and paste its output under the table. On exit 1, fix the table. On exit 2, fix the claims, or accept the safe grouping that it prints and say so in the text.
    - Verify every upstream fact against a live source and date it. Follow the research rules of the repo's {{CONVENTIONS}}.
    - Add `## Planning specialist review`: record supplied intake findings and dispositions, or pending orchestrator selection at the draft boundary. Do not assume a skipped or incomplete review passed.

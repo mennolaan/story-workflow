@@ -9,7 +9,7 @@ validates launch settings, not the semantic completeness of their reviews.
 
 ## Selection and timing
 
-At story intake, assess both roles from the story-reader digest, existing scope
+At story intake, assess the roles below from the story-reader digest, existing scope
 decisions and available evidence. Record `run`, `skip` or `defer until draft`,
 with a concrete reason, in the ledger. Missing source facts go to source-reader
 first; a specialist is for a decision/review question, not fetching documents.
@@ -24,10 +24,16 @@ first; a specialist is for a decision/review question, not fetching documents.
   concurrency boundaries, or uncertainty about track independence. Skip when
   existing contracts/patterns and ownership are clear. Complexity alone is not
   a reason for a second agent to repeat the planner's full investigation.
+- **Documentation reviewer:** optional for substantial plan/document comparisons
+  or unresolved authority/drift questions. Routine assessment stays with the
+  existing planner. The documentation skill's impact check is required even
+  when this agent is skipped. At completion, the orchestrator may scope a fresh
+  documentation or requirements evidence recheck; routine trace derivation
+  reuses the existing integrated review without another agent.
 
-On the planner's draft `PHASE DONE`, reassess both roles before sending `next:`
+On the planner's draft `PHASE DONE`, reassess the roles before sending `next:`
 for the plan's Review phase. Resolve deferred decisions to `run` or `skip`.
-When both can inspect the same snapshot independently, invoke them in parallel.
+When selected reviewers can inspect the same snapshot independently, invoke them in parallel.
 When an unresolved product decision determines architecture, settle that first
 and then supply the revised snapshot to the architect. Do not serialize
 unrelated source reads or implementation tracks behind an unnecessary review.
@@ -39,6 +45,7 @@ Use the cheapest adequate profile and explicit effort for the bounded question:
 | Work | Starting route | Escalation reason |
 |---|---|---|
 | Requirements/acceptance gaps | `requirements` (Sonnet/medium) | conflicting rules or consequential ambiguity needs deeper reasoning |
+| Documentation impact/drift | `documentation` (Sonnet/medium) | a consequential ambiguity warrants review/high or complex/high |
 | Architecture within established patterns | `review` (Sonnet/high) | unresolved design with security, concurrency, migration or broad contract risk |
 | Difficult unresolved requirements/design | `complex` (Opus/high) | name the specific reasoning problem; no default xhigh/max |
 
@@ -54,6 +61,9 @@ and provider model IDs respect the repo's `routing` overrides.
 
 Use the route's `model` and `effort` explicitly on the Agent call, with type
 `story-workflow:requirements-reviewer` or `story-workflow:architect-reviewer`.
+Documentation uses `story-route.sh documentation-review` and
+`story-workflow:documentation-reviewer`; optional final requirements interpretation
+uses `story-route.sh requirements-verify` and the existing requirements reviewer.
 Use its family alias only when the live Agent schema requires aliases; check
 that the alias resolves to the intended model/provider configuration. If the
 host cannot express the route, resolve the mismatch before launching. A model
@@ -90,7 +100,8 @@ Missing evidence produces an incomplete review, not a clean result.
 
 ## Reconcile before acceptance freeze
 
-Forward reports to the planner. It validates findings against source evidence,
+Forward planning reports to the planner (completion reports to the owning
+implementer). That owner validates findings against source evidence,
 records each finding as accepted/rejected/deferred with a reason, and revises
 the plan, claims, routing and acceptance scenarios together. Reviewers cannot
 add requirements or overrule the user. The planner sends genuine product/design
@@ -104,7 +115,8 @@ against its ledger. No deferred selection or unresolved blocking finding may
 silently pass the plan gate. A missing/failed required review must be completed
 or explicitly reassessed by the orchestrator with evidence; never label it pass.
 
-One initial pass per selected role, with at most one focused follow-up when
+One initial pass per selected role and lifecycle stage (planning or final
+verification), with at most one focused follow-up when
 necessary to verify an accepted correction. An incomplete pass consumes a pass;
 do not loop on missing sources, tools or credentials. After that, the
 orchestrator resolves the cause or records why a newly scoped review is needed.

@@ -27,7 +27,15 @@ has() { grep -qF -- "$2" "$1"; }
 cat >"${fake}/codex" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then echo "codex-cli ${FAKE_CODEX_VERSION:-0.153.4}"; exit 0; fi
-out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
+out="" model=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m|--model) model="$2"; shift 2 ;;
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ "${FAKE_REQUIRE_SOL_MODEL:-0}" != 1 ] || [ "${model}" = gpt-6.1-sol ] || exit 42
 cat >/dev/null; [ -n "${out}" ] && echo none >"${out}"; exit 0
 EOF
 cat >"${fake}/gh" <<'EOF'
@@ -138,7 +146,7 @@ prep "${r}" --plan "${tmp}/plan.md"
 [ "${code}" = 0 ] && grep -q '^MODE=plan$' "${scope}/scope.env" && pass "prepare-scope: a plan scope" || fail "prepare-scope plan" "$(cat "${tmp}/stderr")"
 
 # 3. Scope integrity (check_scope_integrity through run-heads.sh --dry-run).
-heads() { out="$(cd "$1" && "${S}/run-heads.sh" "$2" "${@:3}" 2>"${tmp}/stderr")"; code=$?; }
+heads() { out="$(cd "$1" && FAKE_CODEX_VERSION="${FAKE_CODEX_VERSION:-0.167.0}" "${S}/run-heads.sh" "$2" "${@:3}" 2>"${tmp}/stderr")"; code=$?; }
 prep "${r}" origin/main HEAD
 heads "${r}" "${scope}" --dry-run
 [ "${code}" = 0 ] && pass "integrity: a fresh branch scope passes" || fail "integrity fresh" "$(cat "${tmp}/stderr")"
@@ -186,13 +194,32 @@ prep "${r}" --plan "${tmp}/plan.md"; plan_scope="${scope}"
 heads "${r}" "${plan_scope}" --dry-run
 [ "${code}" = 0 ] && [ -f "${plan_scope}/heads/conform.prompt.md" ] && [ ! -f "${plan_scope}/heads/identity.prompt.md" ] \
   && pass "render: a plan scope runs planHeads" || fail "render plan heads" "$(cat "${tmp}/stderr")"
+[ "${code}" = 0 ] && grep -qF -- '-m gpt-6.1-sol' <<<"${out}" \
+  && pass "heads: plan review pins GPT-6.1 Sol" || fail "plan model pin" "${out}"
 rm -rf "${r}/.claude/review-profile"
 prep "${r}" origin/main HEAD
-heads "${r}" "${scope}" --heads delivery
+FAKE_REQUIRE_SOL_MODEL=1 heads "${r}" "${scope}" --heads delivery
 [ "${code}" = 0 ] && grep -q $'^delivery\t0\t5\t' "${scope}/heads/status.tsv" && has "${scope}/heads/delivery.prompt.md" "CLAUDE.md and AGENTS.md" \
   && pass "heads: a run with fake codex writes status.tsv; no profile gives the default context" || fail "heads run" "$(cat "${tmp}/stderr")"
+heads "${r}" "${scope}" --heads delivery --model gpt-6.1-sol --dry-run
+[ "${code}" = 0 ] && grep -qF -- '-m gpt-6.1-sol' <<<"${out}" \
+  && pass "heads: explicit GPT-6.1 Sol is accepted" || fail "explicit model pin" "${out}$(cat "${tmp}/stderr")"
+for wrong_model in gpt-6-sol gpt-6-astra gpt-6.1-terra ''; do
+  heads "${r}" "${scope}" --heads delivery --model "${wrong_model}" --dry-run
+  [ "${code}" != 0 ] && has "${tmp}/stderr" 'requires --model gpt-6.1-sol' \
+    && pass "heads: a conflicting or empty model '${wrong_model}' is refused" || fail "conflicting model" "${out}$(cat "${tmp}/stderr")"
+done
+heads "${r}" "${scope}" --heads delivery --model gpt-6-sol --model gpt-6.1-sol --dry-run
+[ "${code}" != 0 ] && has "${tmp}/stderr" 'requires --model gpt-6.1-sol' \
+  && pass "heads: a later model flag cannot hide a forbidden override" || fail "duplicate model" "${out}$(cat "${tmp}/stderr")"
+heads "${r}" "${scope}" --heads delivery --model
+[ "${code}" != 0 ] && has "${tmp}/stderr" 'requires --model gpt-6.1-sol' \
+  && pass "heads: a missing model value fails before running Codex" || fail "missing model" "$(cat "${tmp}/stderr")"
 heads "${r}" "${scope}" --heads delivery --effort maxx --dry-run
 [ "${code}" != 0 ] && has "${tmp}/stderr" "not a reasoning effort" && pass "heads: an unknown effort is refused" || fail "heads effort" "$(cat "${tmp}/stderr")"
+FAKE_CODEX_VERSION=0.153.4 heads "${r}" "${scope}" --heads delivery --dry-run
+[ "${code}" != 0 ] && has "${tmp}/stderr" 'verified set (0.167.0)' \
+  && pass "heads: the legacy companion pin cannot bypass the exec-only pin" || fail "exec-only version pin" "$(cat "${tmp}/stderr")"
 
 # 5. run-adversarial.sh.
 adv() { out="$(cd "$1" && "${S}/run-adversarial.sh" "$2" 2>"${tmp}/stderr")"; code=$?; }

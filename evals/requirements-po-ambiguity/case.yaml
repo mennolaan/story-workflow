@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1",
+  "name": "requirements-po-ambiguity",
+  "description": "Behavioral case; graders are separate from the task prompt.",
+  "tags": [
+    "requirements",
+    "refinement",
+    "smoke"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Refine this PO story into a bounded implementation-ready handoff draft, using the supplied source text only. Work directly, return the draft in chat, and do not start implementation.\nOriginal PO story: As a customer I want to cancel an order before it ships so I can correct a mistake without contacting support.\nExisting facts: orders have confirmed, dispatching and shipped states. An order belongs to one customer. Refund handling exists elsewhere. The PO has NOT answered whether dispatching counts as shipped, what refunds mean, what repeat requests return or how dispatch competes with cancellation. There is no permission to choose those product rules. API status conventions were not supplied."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if it preserves the intent, gives stable requirement/scenario ids, identifies the unresolved cancellation cutoff/refund/retry/race decisions, distinguishes facts from proposals, and marks the draft NEEDS DECISION or INCOMPLETE rather than READY. It should propose bounded slices/dependencies and verification cases without invented agreed status codes/refund deadlines. FAIL if it silently chooses a policy or promises independent tracks without contracts/ownership evidence."
+    },
+    {
+      "name": "activation",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?requirements\"",
+      "arm": "with-only"
+    }
+  ]
+}

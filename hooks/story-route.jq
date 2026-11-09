@@ -12,12 +12,14 @@ def effort_rank: {low:0, medium:1, high:2, xhigh:3, max:4}[.];
   complex:{family:"opus",effort:"high"},
   review:{family:"sonnet",effort:"high"},
   requirements:{family:"sonnet",effort:"medium"},
+  documentation:{family:"sonnet",effort:"medium"},
   retrieval:{family:"haiku",effort:"low"},
   verification:{family:"haiku",effort:"low"}
 } as $defaults |
 {plan:"planning",implement:"implementation","implement-track":"implementation",
  "pr-review":"review",reader:"retrieval",verification:"verification",
- "requirements-review":"requirements","architect-review":"review"} as $roles |
+ "requirements-review":"requirements","architect-review":"review",
+ "documentation-review":"documentation","requirements-verify":"review"} as $roles |
 require($configs|length == 1; "config must contain one JSON object") |
 $configs[0] as $cfg |
 require($cfg|type == "object"; "config must be an object") |

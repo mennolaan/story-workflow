@@ -142,6 +142,131 @@ class ReviewTest(unittest.TestCase):
     def test_missing_evidence_blocks_review(self):
         self.review(error="missing passing evidence")
 
+    def traced_contract(self):
+        self.contract["requirements"] = [
+            {"id": "R-" + c["id"], "requirement": c["requirement"], "source": "PO #42 " + c["id"], "criteria": [c["id"]]}
+            for c in self.contract["criteria"]]
+        self.contract["documentation"] = {"reason": "operator instructions change", "items": [
+            {"id": "DOC-1", "source": "docs/operations.md", "action": "update",
+             "reason": "document approved behavior", "criteria": ["AC104"]}]}
+        self.write(self.source, self.contract)
+        self.bind("orchestrator")
+        self.call("freeze", "story", str(self.source), "--require-traceability")
+        self.bind("implement")
+
+    def integrated(self, action="run", error=None, **env):
+        return self.call(action, "story", "integrated", "all", self.base, error=error, **env)
+
+    def all_checks(self):
+        self.bind("implement")
+        return self.check(criteria=",".join(c["id"] for c in self.contract["criteria"]), scope="integrated")
+
+    def test_new_story_cannot_freeze_without_traceability(self):
+        self.bind("orchestrator")
+        self.call("freeze", "story", str(self.source), "--require-traceability", error="require requirements and documentation")
+
+    def test_frozen_requirement_and_documentation_references_are_validated(self):
+        self.traced_contract()
+        from copy import deepcopy
+        original = deepcopy(self.contract)
+        mutations = [
+            (lambda c: c.update(requirements=[]), "nonempty array"),
+            (lambda c: c["requirements"].append(c["requirements"][0]), "duplicate requirement"),
+            (lambda c: c["requirements"][0].update(source=""), "text and source"),
+            (lambda c: c["requirements"][0].update(criteria=["unknown"]), "known criterion links"),
+            (lambda c: c["requirements"].pop(), "every criterion must trace"),
+            (lambda c: c["documentation"].update(reason=""), "assessment reason"),
+            (lambda c: c["documentation"]["items"][0].update(criteria=[]), "docs need evidence criteria"),
+            (lambda c: c["documentation"]["items"][0].update(criteria=["missing"]), "known criterion links"),
+            (lambda c: c["documentation"]["items"][0].update(action="none"), "none must have no links"),
+        ]
+        self.bind("orchestrator")
+        for mutate, error in mutations:
+            with self.subTest(error=error):
+                changed = deepcopy(original)
+                mutate(changed)
+                self.write(self.source, changed)
+                self.call("freeze", "story", str(self.source), "--require-traceability", error=error)
+
+    def test_no_documentation_impact_needs_a_recorded_assessment(self):
+        self.traced_contract()
+        self.contract["documentation"] = {"reason": "checked user/API/operations docs; internal-only refactor", "items": []}
+        self.write(self.source, self.contract)
+        self.bind("orchestrator")
+        self.call("freeze", "story", str(self.source), "--require-traceability")
+
+    def test_trace_derives_coverage_without_another_model_call(self):
+        self.traced_contract()
+        evidence = self.all_checks()
+        reviewed = self.integrated()
+        command_record = (self.root / "args.json").stat().st_mtime_ns
+        trace = self.integrated("trace", FAKE_MODE="fail")
+        self.assertEqual(trace["status"], "TRACE OK")
+        self.assertEqual(len(trace["requirements"]), 5)
+        self.assertTrue(all(r["status"] == "met" for r in trace["requirements"]))
+        self.assertEqual(trace["documentation"][0]["tasks"], ["104"])
+        self.assertEqual(trace["documentation"][0]["checks"], [evidence["evidence"]])
+        self.assertEqual(trace["reviewHash"], reviewed["resultHash"])
+        self.assertEqual(trace["head"], self.git("rev-parse", "HEAD"))
+        self.assertEqual((self.root / "args.json").stat().st_mtime_ns, command_record)
+        prompt = json.loads((Path(reviewed["result"]).parent / "prompt.txt").read_text().split("\n", 1)[1])
+        self.assertEqual(len(prompt["requirements"]), 5)
+        self.assertEqual(prompt["documentation"]["items"][0]["id"], "DOC-1")
+
+    def test_trace_cannot_certify_without_current_review_and_checks(self):
+        self.traced_contract()
+        self.integrated("trace", error="missing passing evidence")
+        self.all_checks()
+        self.integrated("trace", error="missing or stale review")
+        self.integrated()
+        (self.repo / "src/a.txt").write_text("changed after review")
+        self.commit("new source")
+        self.integrated("trace", error="missing passing evidence")
+
+    def test_documentation_metadata_change_invalidates_frozen_approval(self):
+        self.traced_contract()
+        self.all_checks()
+        self.integrated()
+        self.contract["documentation"]["items"][0]["reason"] = "a newly changed scope"
+        self.write(self.source, self.contract)
+        self.integrated("trace", error="approve and freeze")
+
+    def test_track_finder_receives_only_scoped_quality_obligations(self):
+        self.traced_contract()
+        self.bind("implement", "A")
+        self.check()
+        reviewed = self.review()
+        prompt = json.loads((Path(reviewed["result"]).parent / "prompt.txt").read_text().split("\n", 1)[1])
+        self.assertEqual([r["id"] for r in prompt["requirements"]], ["R-AC102"])
+        self.assertEqual(prompt["documentation"]["items"], [])
+
+    def test_trace_does_not_hide_acceptance_gaps(self):
+        self.traced_contract()
+        self.all_checks()
+        self.integrated(FAKE_MODE="gap")
+        self.integrated("trace", error="acceptance gap")
+
+    def test_trace_does_not_hide_blocking_findings(self):
+        self.traced_contract()
+        self.all_checks()
+        report = self.integrated(FAKE_MODE="finding")
+        self.integrated("trace", error="blocking review findings")
+        decisions = self.root / "decisions.json"
+        self.write(decisions, {"reviewHash": report["resultHash"], "dismissed": [{"id": "F1", "reason": "reproduced false positive", "evidence": "source invariant and executed scenario"}]})
+        self.assertEqual(self.call("trace", "story", "integrated", "all", self.base, str(decisions))["status"], "TRACE OK")
+
+    def test_trace_labels_legacy_contracts_without_claiming_coverage(self):
+        self.all_checks()
+        self.integrated()
+        result = self.integrated("trace")
+        self.assertEqual(result["status"], "TRACE LEGACY")
+        self.assertEqual(result["requirements"], [])
+
+    def test_partial_track_cannot_claim_whole_story_traceability(self):
+        self.check()
+        self.review()
+        self.review("trace", error="whole-story")
+
     def test_changed_source_invalidates_checks(self):
         self.check()
         (self.repo / "src/a.txt").write_text("another version")

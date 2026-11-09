@@ -35,6 +35,12 @@ One phase per turn, in this order. One board task per phase.
 {{PHASES}}
 
 ## Acceptance evidence and independent review
+Read `{{PLUGIN}}/skills/documentation/SKILL.md` and
+`{{PLUGIN}}/skills/requirements/SKILL.md`. Keep approved R ids and documentation
+obligations with each task; update only owned documentation alongside behavior.
+The story branch owns shared docs and final integration. Request a specialist
+through the orchestrator when useful; it chooses agent/model/effort. A draft
+wiki update does not satisfy a required published change.
 Read `{{PLUGIN}}/skills/story/review.md`. The original review base is
 `{{REVIEW_BASE_SHA}}`; keep that commit unchanged throughout the scope.
 After the final foundation commit, capture its criterion checks and run/gate
@@ -47,6 +53,12 @@ per-criterion evidence in Implementation status. This local read-only Codex
 finder is authorized; unrelated paid runs remain forbidden. Do not describe
 unexecuted browser/database checks as passed. Review limits and queued finders
 use `BLOCKED` with the precise reason; other tracks continue.
+After the current integrated gate, run `story-review.sh trace {{SLUG}} integrated
+all {{REVIEW_BASE_SHA}}` (same gate dismissals file when applicable) and save its
+JSON to `{{PLANS}}/{{SLUG}}.d/traceability.json`. New stories require `TRACE OK`
+before the docket and again after fixes change the revision/evidence. Report
+legacy contracts or missing requirement/docs coverage to the orchestrator.
+This derivation makes no extra model call and does not replace real scenarios.
 
 ## Parallel mode
 Only when the orchestrator runs the story in parallel tracks (`{{PLUGIN}}/skills/story/SKILL.md`, "Parallel tracks"). You are then the story-branch session. Track sessions run the track tasks on their own local branches at the same time.

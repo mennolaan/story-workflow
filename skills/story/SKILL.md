@@ -15,7 +15,7 @@ This session is the **orchestrator** of one story. It asks the user every questi
 |---|---|---|---|---|
 | orchestrator | the user, `/story <id>` | its own | the ledger; board, push, PR, cloud | yes, the only one |
 | plan | orchestrator, `fresh` | own, detached at `origin/{{BASE}}` | `<slug>.md` | no |
-| requirements/architect reviewer | orchestrator, optional Agent call | reads a bounded planning snapshot | returns findings only; no shared writes | no |
+| requirements/architect/documentation reviewer | orchestrator, optional Agent call | reads a bounded planning snapshot | returns findings only; no shared writes | no |
 | implement | orchestrator, `fresh`, after PLAN READY | own, `{{BRANCH}}` | code, local commits, `## Implementation status` | no |
 | implement, story branch | orchestrator, `fresh`, at the plan gate in parallel mode | own, `{{BRANCH}}` | the foundation and integrate tasks, every shared file, the merge, `## Implementation status` | no |
 | implement, track | orchestrator, `fresh`, at the plan gate in parallel mode | own, `{{TRACK_BRANCH}}` from `{{BASE_SHA}}` | the tasks of its track, local commits, `<slug>.d/status-<track>.md` | no |
@@ -34,6 +34,8 @@ All sessions of a story share the `.plans/` folder of the main checkout: `$(dirn
 - `<slug>.d/ledger.md`: the orchestrator ledger (template: `ledger.md` beside this file).
 - `<slug>.d/routing.json`: task profiles, context estimates and reasons, proposed by the planner and finalized by the orchestrator.
 - `<slug>.d/acceptance.json`: approved criteria and verification scenarios, frozen by the orchestrator before implementation (`review.md`).
+- `<slug>.d/documentation.md`, `requirements.md`: planner-owned impact/refinement records; the story-branch owner records completion gaps in Implementation status.
+- `<slug>.d/traceability.json`: derived current requirement/docs coverage from the final integrated gate.
 - `<slug>.d/planning-reviews/`: orchestrator-owned specialist input snapshots and reports (`planning-review.md`); the planner records dispositions in the plan.
 - `<slug>.d/reviews/<scope>/`: captured check logs, findings, judge decisions and review events. Protected receipts/contract live under `.sessions/review-<slug>/`.
 - `<slug>.d/<role>.md`: the checkpoint of each role (`/checkpoint`). A track session writes `<slug>.d/implement-<track>.md`.
@@ -57,7 +59,7 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 1. Bind this session: `"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" orchestrator <slug>`. The slug is `<id>-<short-name>`. When it refuses because the backstop is off, stop and show the user its message.
 2. Read the story and its tasks with the story-reader agent (Agent, `subagent_type: "story-workflow:story-reader"`, `model: "haiku"`, `effort: "low"`). Its prompt holds `{{BOARD_SHOW}}` and asks for each child task. Use its digest.
 3. Write `<slug>.d/ledger.md` from the template. Set the session title.
-4. Read `planning-review.md`. Decide whether requirements review is useful now and whether architecture review should wait for the draft. Record run/skip/defer reasons in the ledger. Fetch missing facts through the cheap readers first. Resolve genuine scope questions from existing authority or the user. If selected now, run the requirements reviewer with explicit resolved model/effort and retain its findings for the planner.
+4. Read the documentation and requirements skills (`../documentation/SKILL.md`, then `../requirements/SKILL.md`) and `planning-review.md`. Choose whether the existing planner should do each assessment directly or a bounded specialist is useful, with explicit profile/model/effort and a recorded reason. Decide whether requirements review is useful now and whether architecture review should wait for the draft. Record run/skip/defer reasons in the ledger. Fetch missing facts through the cheap readers first. Resolve genuine scope questions from existing authority or the user. If selected now, run the requirements reviewer with explicit resolved model/effort and retain its findings for the planner.
 5. Start the plan session with `briefs/plan.md`, filled in, plus any intake specialist report and scope decisions.
 
 ## Starting a handoff session
@@ -100,12 +102,35 @@ env -u CLAUDE_CODE_HOST_SESSION_ID claude -p "<prompt>"
 
 ## Flow
 
-1. **Plan.** The plan session writes the draft and ends its Draft phase with `PHASE DONE`. Before advancing it, reassess both optional specialists using `planning-review.md`; choose run/skip and explicit model/effort for each. Run independent selected reviews in parallel on one snapshot, relay findings to the planner and settle real scope/design decisions. The planner reconciles findings, then runs `{{REVIEW_PLAN}}` on the final proposal, folds in accepted findings and ends with `PLAN READY <path>`.
-2. **Plan gate.** Read the plan summary, its `## Review` and `## Planning specialist review`. Match run/skip decisions and report snapshots to the ledger; resolve incomplete required reviews and blocking findings before freezing acceptance (`planning-review.md`). Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-route.sh" --check "<plan path>" "<routing.json>"`. It checks exact manifest coverage and budgets every safe group and the story-branch scope (the entire story in sequential mode). On invalid input or conflicting settings send the reason back and start nothing. Sizing warnings are advisory: prefer more independent handoffs when they reduce elapsed time and total tokens; otherwise record why the scope stays together and allow checkpoint/compaction. If the user chooses sequential mode after a parallel proposal, rerun `story-route.sh implement <manifest> <all ids including merge,review>` to assess its combined size. Review the planner's profiles and reasons, especially requests for Opus or high effort. Read `review.md`, check each acceptance criterion and its verification scenario, and incorporate any scope decisions. After those decisions are settled, run `story-review.sh freeze <slug> <acceptance.json>` as orchestrator immediately before implementation starts. The freeze verifies safe-group membership and exact task coverage. Record the contract hash in the ledger. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
+1. **Plan.** The plan session writes the draft and ends its Draft phase with `PHASE DONE`. Before advancing it, reassess the optional specialists using `planning-review.md`; choose run/skip and explicit model/effort for each. Run independent selected reviews in parallel on one snapshot, relay findings to the planner and settle real scope/design decisions. The planner reconciles findings, then runs `{{REVIEW_PLAN}}` on the final proposal, folds in accepted findings and ends with `PLAN READY <path>`.
+2. **Plan gate.** Read the plan summary, its `## Review` and `## Planning specialist review`. Match run/skip decisions and report snapshots to the ledger; resolve incomplete required reviews and blocking findings before freezing acceptance (`planning-review.md`). Check source-clause coverage, stable requirement ids, documentation contradictions/owners and the eval plan against both quality skills. New plans must declare `requirements` and `documentation` in acceptance.json. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-groups.sh" "<plan path>"` on the plan's claims table. Its output is the authority, not the plan text. When it exits 1, send its message to the plan session to fix the table, and wait for `PLAN READY` again. Run `"${CLAUDE_PLUGIN_ROOT}/hooks/story-route.sh" --check "<plan path>" "<routing.json>"`. It checks exact manifest coverage and budgets every safe group and the story-branch scope (the entire story in sequential mode). On invalid input or conflicting settings send the reason back and start nothing. Sizing warnings are advisory: prefer more independent handoffs when they reduce elapsed time and total tokens; otherwise record why the scope stays together and allow checkpoint/compaction. If the user chooses sequential mode after a parallel proposal, rerun `story-route.sh implement <manifest> <all ids including merge,review>` to assess its combined size. Review the planner's profiles and reasons, especially requests for Opus or high effort. Read `review.md`, check each acceptance criterion and its verification scenario, and incorporate any scope decisions. After those decisions are settled, run `story-review.sh freeze <slug> <acceptance.json> --require-traceability` as orchestrator immediately before implementation starts. The freeze verifies safe-group membership and exact task coverage. Record the contract hash in the ledger. With `MODE sequential`, continue at once, with a short plan digest to the user, unless the plan lists an open decision for the user. Then show the digest and ask for that decision only. With `MODE parallel`, ask the user once ("Parallel tracks"), with the open decisions of the plan in the same turn.
 3. **Implement.** Stop the plan session. In sequential mode, start the implement session with `briefs/implement.md`. It implements one phase per turn ("Phased turns and steering"), runs the verification of the repo's CLAUDE.md, commits locally, runs `{{REVIEW_CHANGES}}` and ends with `DOCKET <path>`. In parallel mode, start the story-branch session and the tracks ("Parallel tracks"). The story-branch session merges the tracks, runs the integrate tasks and the review, and ends with `DOCKET <path>`.
-4. **Docket.** Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
+4. **Docket.** Require a fresh integrated gate and derived `TRACE OK` report for new stories (`../requirements/SKILL.md`, verify). Check it in the implementation worktree against current HEAD/contract/evidence; resolve gaps and required external documentation publication before completion. Delegate any bounded semantic recheck only when useful, explicitly choosing its model/effort. Recompute after fixes; legacy contracts need reassessment before claiming the new standard. Send the findings that the judge accepted with evidence back for fixing. Ask the user only about design challenges and residual follow-ups. The implement session fixes and ends with `READY TO PUSH <branch> <sha>`.
 5. **Push.** Ask the user one question: push and open the draft PR. On yes, push and run `{{PR_CREATE}}` here. When the config has no `pr.create`, ask the user how to open the PR. Set the title to 🔀 `PR OPEN`. Then start the pr-review session with `briefs/pr-review.md`.
 6. **Close.** Unbind each child (`"${CLAUDE_PLUGIN_ROOT}/hooks/story-bind.sh" --unbind <child id>`), then this session (`story-bind.sh --unbind`). A binding outlives `/clear`, because its key is the host id, so a session reused after the story keeps its role until it is unbound. Report the result and the next steps. Set the title to `✅ <title>`.
+
+## Documentation, requirements and evaluations
+
+Use the documentation skill at plan assessment, owned updates and final
+verification; then the requirements skill for refinement/source coverage and
+completion traceability. These lightweight procedures are required for new
+stories; a new agent/session is optional. The orchestrator alone chooses whether
+work stays with the existing planner/implementer, uses a bounded read-only agent,
+or needs an independent owned handoff. Reviewers never become second writers.
+
+`story-route.sh documentation-review --profile documentation --effort medium`
+and `story-route.sh requirements-verify --profile review --effort high` resolve
+starting settings for optional documentation/requirements agents. Use explicit
+Agent model/effort, verify effective settings and record choices/usage as for
+other specialists. Route named facts to source-reader and prescribed checks to
+test-runner; preserve parallel safe work and avoid duplicate full Codex reviews.
+
+For agent/skill/workflow changes, define failing native eval cases and graders
+before changing behavior. Read `evals/README.md` at the plugin root: measure
+activation, instruction uptake and outcome separately, compare with baseline,
+retain held-out cases and record model/effort/cost. Shell/stub tests establish
+mechanical invariants, not semantic agent quality. Desktop session coordination
+needs a host integration run; native text evals do not prove it works.
 
 ## Model routing and session size
 

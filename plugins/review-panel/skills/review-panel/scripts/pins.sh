@@ -13,6 +13,12 @@
 SUPPORTED_COMPANION_VERSIONS="1.0.6"   # codex plugin companion; verified 2026-08-19
 # shellcheck disable=SC2034
 SUPPORTED_CODEX_VERSIONS="0.153.4"     # codex CLI (`codex --version`); exec flags -s/--sandbox, -C, --color, -m, -c, -o re-verified against `codex exec --help` on 0.153.4, 2026-09-10
+# Separate exec-only pin: the companion's app-server compatibility above is
+# not implied. Local `codex exec --help` checked on 0.167.0, 2026-11-08:
+# --sandbox read-only, -C, --color never, -m, -c, -o and stdin '-'. Runner
+# integration uses fake Codex fixtures; no paid GPT-6.1 Sol call was made.
+# shellcheck disable=SC2034
+SUPPORTED_HEAD_CODEX_VERSIONS="0.167.0"
 
 # check_pin <label> <actual> <supported-list>: exit 1 on a mismatch unless REVIEW_PANEL_ALLOW_UNPINNED=1
 check_pin() {

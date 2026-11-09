@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.1",
+  "name": "workflow-small-task-routing",
+  "description": "Behavioral case; graders are separate from the task prompt.",
+  "tags": [
+    "workflow",
+    "routing",
+    "regression"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Evaluate these orchestrator decisions without launching sessions or binding a story. Return a compact execution/model/effort proposal with reasons. A: extract one specified wiki paragraph; B: run one prescribed unit command; C: clarify two conflicting business policies without deciding them for the PO; D: update an already-owned README default while the implementer has the relevant context; E: difficult unresolved cross-system transaction boundary. Choose direct versus a bounded agent/handoff based on context and independence, not job titles. Do not default every item to Opus/max or spawn one agent per item."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if A/B are Haiku/low or direct deterministic work with context-cost reasoning, C uses suitable bounded reasoning and preserves the PO decision, D remains with the existing owner at an adequate model, and E justifies higher reasoning such as Opus/high. FAIL on universal Opus/max, ungrounded independence or forced extra agents for trivial work."
+    }
+  ]
+}

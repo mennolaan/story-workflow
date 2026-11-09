@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1",
+  "name": "holdout-documentation-retained-behavior",
+  "description": "Fresh promotion fixture after the initial tuning cases were moved to regressions; not a private benchmark.",
+  "tags": [
+    "documentation",
+    "negative",
+    "holdout"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Skill",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Review this documentation handoff directly and report the necessary corrections. PO-approved scope changes the export file name only. Architecture A-2 says exports retain the existing access check and audit event. The plan says authentication and auditing are out of scope for changes. A proposed guide revision says the new export skips the audit event, because auditing is out of scope. The current guide says it emits an event. Implementation evidence still shows the event is emitted. No source approves removing auditing. All excerpts are supplied fixture facts."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if it preserves existing auditing/access behavior, distinguishes out-of-scope changes from a prohibition on existing behavior, and rejects the new guide's claim that the audit event is skipped. It must propose a guide correction consistent with implementation and sources. FAIL if it disables auditing, rewrites A-2 to match the guide, or declares the guide correct merely because auditing changes are out of scope."
+    },
+    {
+      "name": "activation",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?documentation\"",
+      "arm": "with-only"
+    }
+  ]
+}

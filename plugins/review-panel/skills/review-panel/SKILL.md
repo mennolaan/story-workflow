@@ -73,8 +73,12 @@ is `${CLAUDE_PLUGIN_ROOT}/profile.example/`.
 
 - Session: a high-capability model at `high`. This skill pins the judge turn
   to `high` via frontmatter; never run reviews from a `max` session.
-- Finder: Codex (`codex-companion.mjs adversarial-review`, read-only
-  sandbox; effort and model as configured in `~/.codex/config.toml`). No
+- Finder: default mode uses Codex (`codex-companion.mjs adversarial-review`,
+  read-only sandbox; effort and model as configured in `~/.codex/config.toml`).
+  Deep mode and every plan review require `gpt-6.1-sol`: `run-heads.sh` passes
+  it explicitly for every head and refuses any other `--model`. If unavailable,
+  stop and report the failure; never substitute an older Sol or Astra. Effort
+  remains configured independently. No
   Claude subagent is spawned anywhere in this procedure; the Agent, Workflow
   and /code-review tools are not part of it.
 - Judge: the main thread. It reads `adversarial.json` (or the head outputs in
@@ -153,7 +157,7 @@ without the output that says it passed.
    plus the profile heads, behind `heads/_preamble.md`, parallel,
    `heads/<head>.out.md` plus `status.tsv`; the default set is `deepHeads`,
    or `planHeads` for a plan scope; a plan file is not a git target for the
-   adversarial engine).
+   adversarial engine; every Codex head is pinned to `gpt-6.1-sol`).
    Background the command and keep the main thread idle meanwhile. Codex runs
    are ephemeral: never resumed for a second pass with the same prompt.
 5. **Resolve the fact-sheet gaps (blocking).** Collect every

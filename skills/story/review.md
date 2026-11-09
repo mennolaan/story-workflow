@@ -37,7 +37,7 @@ it still needs captured checks. Foundation and integrated reviews remain require
 After any scope decisions are incorporated at the plan gate, the orchestrator runs:
 
 ```bash
-"<plugin>/hooks/story-review.sh" freeze <slug> "<plans>/<slug>.d/acceptance.json"
+"<plugin>/hooks/story-review.sh" freeze <slug> "<plans>/<slug>.d/acceptance.json" --require-traceability
 ```
 
 This validates coverage against the safe claims groups and saves the approved
@@ -45,6 +45,50 @@ contract and group membership under the already protected `.plans/.sessions/`.
 Only the bound orchestrator can freeze it. A changed source contract invalidates
 the approval until the orchestrator approves/freezes it again. Other sessions
 read it; they never weaken requirements to satisfy a completion gate.
+
+## Documentation and requirement traceability
+
+New plans use the documentation skill (`../documentation/SKILL.md`) to assess
+constraints/impact and own doc updates, followed by requirements refinement
+(`../requirements/SKILL.md`). Add `requirements` and `documentation` to the
+contract before the strict freeze above. The optional specialist agents are
+selected/routed only by the orchestrator; these procedures do not require a
+second full review or an additional agent for every story.
+
+```json
+{"requirements":[{"id":"R-1","requirement":"Retries do not duplicate work",
+ "source":"story #42 AC2","criteria":["AC-101","AC-102","AC-story"]}],
+ "documentation":{"reason":"The public retry contract changes","items":[
+ {"id":"DOC-1","source":"docs/api.md#retry","action":"update",
+  "reason":"Document the approved behavior","criteria":["AC-102"]}]}}
+```
+
+Each requirement needs text, source and unique known criterion links. Every
+criterion must map to at least one requirement. Documentation has an assessment
+reason and `items`; every item needs id/source/action/reason/criteria. Actions
+`update` and `verify` require criterion links; `none` has no links and explains
+why the checked source needs no change. Empty items are valid only with a
+recorded assessment reason. The validator cannot prove extraction completeness
+or semantic correctness: the planner/reviewer checks original source coverage.
+
+After the integrated/PR gate, derive a current coverage report with no model call:
+
+```bash
+"<plugin>/hooks/story-review.sh" trace <slug> integrated all <original-base-sha> [dismissals.json]
+```
+
+Save it as `<slug>.d/traceability.json`. It validates the same revision, frozen
+contract, check logs, review result and supported dismissals as `gate`. It emits
+requirement/criterion/task/check/review links, documentation obligations and
+`TRACE OK`. It refuses stale/missing evidence, partial-track scopes, acceptance
+gaps and unresolved blocking findings. After any fix, recapture/review and
+regenerate the report. The orchestrator verifies it before completion.
+
+Existing contracts without either new section still work with the old freeze
+form, but trace returns `TRACE LEGACY`, never invented modern coverage. New
+stories use `--require-traceability`, which refuses missing sections. Migrate a
+running legacy story only through the orchestrator's explicit source/coverage
+reassessment and re-freeze; never delete sections to pass a gate.
 
 ## Capture checks
 

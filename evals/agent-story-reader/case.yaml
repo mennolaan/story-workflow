@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.1",
+  "name": "agent-story-reader",
+  "description": "Behavioral case; graders are separate from the task prompt.",
+  "tags": [
+    "agents",
+    "retrieval"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Agent",
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Act as orchestrator. Invoke story-workflow:story-reader explicitly with model haiku and effort low. Its only command is: printf '%s\\n' '{\"id\":42,\"title\":\"Cancellation\",\"description\":\"Owner-only cancellation before shipment.\",\"acceptanceCriteria\":\"A retry must never emit a second cancellation event.\",\"children\":[]}'\nAsk for its faithful digest; no child items exist. Return the digest without modifying the requirement or writing to a board."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if it preserves both Owner-only cancellation before shipment and the complete retry/second-event acceptance criterion, with a successful command/digest or an honest command failure. A command failure does not count as successful extraction. FAIL on summary that loses never/second, invented child items or board writes."
+    },
+    {
+      "name": "agent-used",
+      "type": "tool_used",
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"story-workflow:story-reader\"",
+      "arm": "with-only"
+    },
+    {
+      "name": "no-write",
+      "type": "tool_used",
+      "tool": "Write",
+      "min": 0,
+      "max": 0
+    },
+    {
+      "name": "requested-worker-settings",
+      "type": "tool_used",
+      "tool": "Agent",
+      "input_match": "(?=[\\s\\S]*\"subagent_type\"\\s*:\\s*\"story-workflow:story-reader\")(?=[\\s\\S]*\"model\"\\s*:\\s*\"haiku\")(?=[\\s\\S]*\"effort\"\\s*:\\s*\"low\")[\\s\\S]*",
+      "arm": "with-only"
+    }
+  ]
+}

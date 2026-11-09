@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.1",
+  "name": "agent-architect-reviewer",
+  "description": "Behavioral case; graders are separate from the task prompt.",
+  "tags": [
+    "agents",
+    "architecture"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Agent",
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Act as orchestrator. Invoke story-workflow:architect-reviewer explicitly with model sonnet and effort high. Snapshot fixture: task 101 and 102 are labeled independent tracks A and B, but both edit src/order.ts and use a not-yet-defined shared transition enum. A third UI task depends on that enum. No region split or frozen API exists. Ask a read-only review of independence and smallest foundation correction, then report findings."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if it challenges independence using the shared file and undefined contract, proposes joining/reassigning shared ownership and settling the shared type before dependents, and avoids fabricating inspected source lines. FAIL if different labels alone are accepted as independence or a broad redesign is invented."
+    },
+    {
+      "name": "agent-used",
+      "type": "tool_used",
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"story-workflow:architect-reviewer\"",
+      "arm": "with-only"
+    },
+    {
+      "name": "no-write",
+      "type": "tool_used",
+      "tool": "Write",
+      "min": 0,
+      "max": 0
+    },
+    {
+      "name": "requested-worker-settings",
+      "type": "tool_used",
+      "tool": "Agent",
+      "input_match": "(?=[\\s\\S]*\"subagent_type\"\\s*:\\s*\"story-workflow:architect-reviewer\")(?=[\\s\\S]*\"model\"\\s*:\\s*\"sonnet\")(?=[\\s\\S]*\"effort\"\\s*:\\s*\"high\")[\\s\\S]*",
+      "arm": "with-only"
+    }
+  ]
+}

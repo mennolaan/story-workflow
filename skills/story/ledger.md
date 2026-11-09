@@ -59,6 +59,7 @@ read-only subagents, not extra track sessions. See `planning-review.md`.
 |---|---|---|---|---|---|---|
 | requirements-reviewer | run / skip / defer | run / skip | | | | |
 | architect-reviewer | run / skip / defer | run / skip | | | | |
+| documentation-reviewer | direct / run / defer | direct / run | | | | |
 
 - Record the exact question, task/criterion ids, input hashes and code revision.
 - Record elapsed time/usage when exposed; otherwise `unavailable`. One initial
@@ -67,6 +68,22 @@ read-only subagents, not extra track sessions. See `planning-review.md`.
 - Link finding dispositions and user decisions; resolve incomplete required
   reviews and blocking findings before acceptance freeze. Material scope or
   contract changes require reassessment of affected conclusions.
+
+## Documentation and requirement coverage
+
+- Documentation assessment: `<slug>.d/documentation.md`; checked sources,
+  contradictions/dispositions, affected docs, owners/tasks and publication state.
+- Refinement: `<slug>.d/requirements.md`; original clause -> stable R id ->
+  criterion -> task; exclusions/unknowns and source/decision evidence.
+- For each assess/refine/verify operation, choose existing owner (`direct`),
+  bounded read-only `agent` or an owned implementation `handoff`. Record why,
+  profile, requested/observed model/effort, scoped input and result/usage. A
+  lightweight assessment is required; starting another agent is optional.
+- Final traceability: `<slug>.d/traceability.json`, reviewed HEAD/contract hash,
+  current check/review records, `TRACE OK` or explicit legacy/incomplete status.
+- Evals: fixtures/graders defined before policy changes, held-out cases,
+  baseline/candidate model and effort, repetitions, artifacts and observed
+  outcome/process scores. Separate model behavior from stubbed hook tests.
 
 ## Tracks
 
