@@ -227,31 +227,104 @@ def slot(folder, count):
             acquired.close()
 
 
-def execute(argv, log, timeout, input_text=None):
-    """Bound wall time and stop the process group, including shell children."""
+class Interrupted(BaseException):
+    """SIGTERM or SIGHUP: stop the child group before this process exits."""
+
+
+def interrupted(signum, frame):
+    raise Interrupted(signal.Signals(signum).name)
+
+
+def stop_group(pgid, process=None):
+    """TERM the group, give it 2 seconds, then KILL what is left. A group of
+    only zombies answers EPERM on macOS, so both errors mean nothing to stop."""
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    if process is not None:
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+    else:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(pgid, 0)
+            except (ProcessLookupError, PermissionError):
+                return
+            time.sleep(0.05)
+    # A parent can exit while a descendant ignores SIGTERM. Kill the
+    # remaining group even when the wait above already returned.
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def execute(argv, log, timeout, input_text=None, started=None):
+    """Bound wall time and stop the process group, including shell children.
+    The child runs in its own session, so an interrupt of this process does
+    not reach it: every exit path stops the group explicitly."""
     with Path(log).open("w") as stream:
         process = subprocess.Popen(argv, stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
                                    stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
+            if started:
+                started(process.pid)
             process.communicate(input_text.encode() if input_text is not None else None, timeout=timeout)
             return process.returncode
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                pass
-            # A parent can exit while a descendant ignores SIGTERM. Kill the
-            # remaining group even when wait() above already returned.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            stop_group(process.pid, process)
             process.wait()
             return 124
+        except BaseException:
+            stop_group(process.pid, process)
+            process.wait()
+            raise
+
+
+def stop_orphans(attempts):
+    """A reviewer whose recorder was killed (SIGKILL) keeps running. Stop it
+    before a new attempt, so a retry never exceeds the slot bound."""
+    for attempt in attempts:
+        pgid = attempt.get("pgid")
+        if not pgid or "exitCode" in attempt:
+            continue
+        # A PID can be reused. The reviewer's argv holds its own result path
+        # (a uuid folder), so only that exact process instance is stopped.
+        try:
+            command = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pgid)],
+                                     capture_output=True, text=True).stdout
+        except OSError:
+            command = ""
+        if attempt.get("result") and attempt["result"] in command:
+            stop_group(pgid)
+        attempt["exitCode"] = "interrupted"
+
+
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|CREDENTIAL|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTH", re.I)
+SECRET_TEXT = [
+    (re.compile(r"(?i)\b(bearer|basic|token)(\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1\2<redacted>"),
+    (re.compile(r"(?i)\b((?:access_|api_|auth_|refresh_)?(?:token|key|secret|password|passwd|pwd))=([^&\s]+)"), r"\1=<redacted>"),
+    (re.compile(r"(?i)(://[^/\s:@]+:)[^@\s/]+@"), r"\1<redacted>@"),
+]
+
+
+def redact(argv):
+    """Remove expanded secrets from a check command before it is stored,
+    printed or sent to the reviewer. The command itself runs unredacted."""
+    values = sorted(((value, name) for name, value in os.environ.items()
+                     if SECRET_NAME.search(name) and len(value) >= 6), key=lambda item: -len(item[0]))
+    result = []
+    for word in argv:
+        for value, name in values:
+            word = word.replace(value, "$" + name)
+        for pattern, replacement in SECRET_TEXT:
+            word = pattern.sub(replacement, word)
+        result.append(word)
+    return result
 
 
 def result_schema():
@@ -289,7 +362,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plans", required=True)
     parser.add_argument("--config", required=True)
-    parser.add_argument("action", choices=["freeze", "check", "run", "gate", "trace"])
+    parser.add_argument("action", choices=["freeze", "check", "run", "gate", "trace", "reset"])
     parser.add_argument("slug")
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -315,6 +388,16 @@ def main():
              "new stories require requirements and documentation sections before freeze")
         scopes, tasks = group_scopes(Path(args.plans) / (slug + ".md"), args.config)
         need(set(tasks) == set(contract["tasks"]), "acceptance contract must cover exactly the claim tasks")
+        # A handoff criterion is gated by the review of one safe group, so it
+        # must not span two groups (integrate tasks form one group here).
+        owner = {task: name for name, members in scopes.items() for task in members}
+        for criterion in contract["criteria"]:
+            if criterion["stage"] == "handoff":
+                need(len({owner.get(task) for task in criterion["tasks"]}) == 1,
+                     "handoff criterion " + criterion["id"] + " spans tasks of different safe groups; "
+                     "split it per group or make it an integration criterion")
+        need(all(owner.get(task, "").startswith("track-") for task in contract.get("checksOnly", {})),
+             "checksOnly applies only to tasks of a track; foundation and integrated reviews stay required")
         with lock(state / "contract.lock"):
             atomic(frozen_path, {"source": str(source), "hash": digest(contract), "contract": contract, "scopes": scopes})
         print(json.dumps({"contractHash": digest(contract), "frozen": str(frozen_path)}))
@@ -341,6 +424,22 @@ def main():
         need(scope == "pr", "invalid PR review scope")
     folder = Path(args.plans).resolve() / (slug + ".d") / "reviews" / scope
     folder.mkdir(parents=True, exist_ok=True)
+    receipt = state / (scope + ".json")
+    if args.action == "reset":
+        # The orchestrator's logged decision that a scope gets new rounds,
+        # for example a converging fix cycle. Only completed reviews and
+        # failed calls after the last reset count against the limits.
+        need(role == "orchestrator" and len(args.args) == 2 and text(args.args[1]),
+             "reset: only the orchestrator, as reset <slug> <scope> <reason>")
+        with lock(state / (scope + ".lock"), blocking=False):
+            history = read(receipt) if receipt.exists() else {"attempts": []}
+            stop_orphans(history["attempts"])
+            entry = {"afterAttempt": len(history["attempts"]), "contractHash": frozen["hash"],
+                     "reason": args.args[1].strip(), "recordedAtNs": time.time_ns()}
+            history.setdefault("resets", []).append(entry)
+            atomic(receipt, history)
+        print(json.dumps({"status": "REVIEW RESET", "scope": scope, **entry}))
+        return
     if args.action == "check":
         need(len(args.args) >= 4 and args.args[2] == "--", "check: <scope> <criterion,criterion> -- <command> [args...]")
         criteria_ids = ids(args.args[1])
@@ -348,7 +447,8 @@ def main():
         before = revision()
         run = folder / ("check-" + uuid.uuid4().hex)
         run.mkdir()
-        command = args.args[3:]
+        argv = args.args[3:]
+        command = redact(argv)
         previous = sorted((read(p) for p in folder.glob("check-*/check.json")), key=lambda c: c["recordedAtNs"])
         failures = 0
         for old in reversed(previous):
@@ -359,7 +459,7 @@ def main():
         need(role == "orchestrator" or failures < settings["maxCheckFailures"],
              "CHECK LIMIT: repeated failures on unchanged code; ask the orchestrator to resolve the block")
         started = time.monotonic()
-        code = execute(command, run / "output.log", settings["timeoutSeconds"])
+        code = execute(argv, run / "output.log", settings["timeoutSeconds"])
         same = False
         try:
             same = revision() == before
@@ -414,14 +514,23 @@ def main():
     identity = {**current, "base": base, "tasks": sorted(tasks), "contractHash": frozen["hash"], "checks": checks,
                 "reviewSettings": {"model": settings.get("model", "configured-default"), "effort": settings["effort"]}}
     inputs = digest(identity)
-    receipt = state / (scope + ".json")
     with lock(state / (scope + ".lock"), blocking=False):
         history = read(receipt) if receipt.exists() else {"attempts": []}
         attempts = history["attempts"]
         latest = attempts[-1] if attempts else {}
         if args.action == "run" and (latest.get("inputs") != inputs or not latest.get("resultHash")):
-            used = sum(a["contractHash"] == frozen["hash"] for a in attempts)
-            need(used < settings["maxRounds"], "REVIEW LIMIT: stop the fix loop and ask the orchestrator for a decision")
+            stop_orphans(attempts)
+            # Count since the orchestrator's last reset of this scope. A
+            # completed review is a round; a failed, timed-out or interrupted
+            # call is not a round but is bounded separately.
+            since = max([r["afterAttempt"] for r in history.get("resets", [])], default=0)
+            window = [a for a in attempts[since:] if a["contractHash"] == frozen["hash"]]
+            used = sum(bool(a.get("resultHash")) for a in window)
+            failed = len(window) - used
+            need(used < settings["maxRounds"], "REVIEW LIMIT: " + str(used) + " completed reviews of " + scope
+                 + "; stop the fix loop and ask the orchestrator for a decision (it may run reset with a reason)")
+            need(failed < settings["maxRounds"], "REVIEW LIMIT: " + str(failed) + " failed reviewer calls of " + scope
+                 + "; resolve the cause with the orchestrator before another attempt")
             codex = shutil.which("codex")
             need(codex, "codex CLI is not on PATH; review is unavailable, not passed")
             with slot(state, settings["maxParallel"]):
@@ -462,7 +571,17 @@ def main():
                     command += ["--model", settings["model"]]
                 command.append("-")
                 started = time.monotonic()
-                attempt["exitCode"] = execute(command, run / "events.jsonl", settings["timeoutSeconds"], prompt)
+
+                def record_group(pgid):
+                    attempt["pgid"] = pgid
+                    atomic(receipt, history)
+                try:
+                    attempt["exitCode"] = execute(command, run / "events.jsonl", settings["timeoutSeconds"],
+                                                  prompt, record_group)
+                except BaseException:
+                    attempt["exitCode"] = "interrupted"
+                    atomic(receipt, history)
+                    raise
                 attempt["elapsedSeconds"] = round(time.monotonic() - started, 3)
                 atomic(receipt, history)
                 need(attempt["exitCode"] == 0 and Path(attempt["result"]).is_file(), "Codex review failed or timed out; inspect " + str(run))
@@ -498,8 +617,14 @@ def main():
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGHUP, interrupted)
     try:
         main()
+    except (Interrupted, KeyboardInterrupt) as error:
+        print("story-review: interrupted (" + (str(error) or "SIGINT") + "); the child process group was stopped",
+              file=sys.stderr)
+        sys.exit(130)
     except (Refused, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
         print("story-review: " + str(error), file=sys.stderr)
         sys.exit(3 if str(error).startswith("REVIEW QUEUED") else 1)

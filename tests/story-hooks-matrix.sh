@@ -350,6 +350,9 @@ cmds=(
   "Bash|git \$'\\x70ush' origin HEAD"
   "Bash|git \$'\\160ush'"
   "Bash|export \"CLAUDE_CODE_HOST_SESSION_ID=x\""
+  "Bash|\"/p/hooks/story-review.sh\" check s integrated AC-1 -- git push origin HEAD"
+  "Bash|story-review.sh check s track-A AC-1 -- bash -c 'gh pr create'"
+  "Bash|story-review.sh check s integrated AC-1 -- az pipelines run --name x"
 )
 guard_in() { # guard_in <key> <tool> <command>
   jq -cn --arg s "$1" --arg t "$2" --arg c "$3" \
@@ -374,6 +377,7 @@ for role in plan implement pr-review orchestrator unbound; do
   done
 done
 heredoc="$(printf "cat <<'EOF' > notes.md\ngit push --dry-run\naz pipelines run --name x\nEOF\ngit status")"
+hook role-guard.sh "$(guard_in g-implement Bash 'story-review.sh check s track-A AC-1 -- bash -o pipefail -c "npm test | tee out.log"')"; [ -z "${out}" ] && pass "role-guard: a check recorder runs a local test" || fail "role-guard: a local check denied" "${out}"
 hook role-guard.sh "$(guard_in g-implement Bash "${heredoc}")"; [ -z "${out}" ] && pass "role-guard: git push inside a heredoc is not a push" || fail "role-guard: heredoc body denied" "${out}"
 quoted="git commit -m \"docs: say why git push stays with the orchestrator\""
 hook role-guard.sh "$(guard_in g-implement Bash "${quoted}")"; [ -z "${out}" ] && pass "role-guard: git push inside a quoted message is not a push" || fail "role-guard: quoted text denied" "${out}"

@@ -40,7 +40,9 @@ After any scope decisions are incorporated at the plan gate, the orchestrator ru
 "<plugin>/hooks/story-review.sh" freeze <slug> "<plans>/<slug>.d/acceptance.json" --require-traceability
 ```
 
-This validates coverage against the safe claims groups and saves the approved
+This validates coverage against the safe claims groups, refuses a handoff
+criterion whose tasks sit in two safe groups (make it an integration criterion
+or split it) and `checksOnly` on a foundation or integrate task, and saves the approved
 contract and group membership under the already protected `.plans/.sessions/`.
 Only the bound orchestrator can freeze it. A changed source contract invalidates
 the approval until the orchestrator approves/freezes it again. Other sessions
@@ -107,6 +109,14 @@ checks establish all of them. A test suite exit code alone does not demonstrate
 runtime wiring, database state or a browser interaction unless it tests them.
 Never attach an id merely because a command passed. Capture those scenarios too.
 
+Keep secrets out of the argument array. The shell expands `$API_TOKEN` before
+the recorder sees it, so pass it unexpanded inside single quotes:
+`-- bash -c 'curl -H "Authorization: Bearer $API_TOKEN" …'`. The recorder also
+redacts values of environment variables named like a token, key, secret or
+password, bearer/basic values, `token=`/`password=` values and URL passwords from
+the stored command; the command itself runs unredacted. Output is not redacted,
+and the reviewer can read the check logs: a check must not print secrets.
+
 The recorder saves command, exit code, elapsed time, output, contract hash, HEAD
 and tree. Failed/timed-out checks are recorded as failures. Newer evidence for a
 criterion replaces older evidence at the same revision, allowing recovery from
@@ -161,12 +171,26 @@ identify the queue, and retain the implementing session. The orchestrator sends
 `next: review` when capacity is available; it does not pause unrelated tracks or
 ask the user to approve an ordinary review.
 
-Default limits: two attempts per scope/approved contract, ten minutes per check
-or review, and two repeated check failures. A failed/malformed/timed-out model
-call consumes an attempt; it never counts as a clean review. At `REVIEW LIMIT`,
-stop and send the unresolved findings and evidence to the orchestrator. Resolve
-an operational block or rethink the approach; do not start a renamed scope to
-evade the limit. Only genuinely changed approved scope merits a new contract.
+Default limits: two completed reviews per scope/approved contract, two failed
+reviewer calls, ten minutes per check or review, and two repeated check failures.
+A failed, malformed, timed-out or interrupted call never counts as a clean review
+and does not use a round; it counts toward the failed-call limit. At `REVIEW LIMIT`,
+stop and send the unresolved findings and evidence to the orchestrator. Do not
+start a renamed scope or change the contract to evade the limit.
+
+The orchestrator decides what happens next. When the fix cycle converges (the
+open findings are new defects of the fixes, not a design problem), it opens new
+rounds for that scope with a logged reason:
+
+```bash
+"<plugin>/hooks/story-review.sh" reset <slug> integrated "second docket fix; the findings converge"
+```
+
+`reset` is orchestrator-only, needs a nonempty reason and appends it to the
+scope's receipt. Record it in the ledger. When the findings point at the design,
+take that to the user instead of resetting. A stopped or killed recorder stops
+its reviewer process; a reviewer left running by a killed recorder is stopped
+before the next attempt of that scope.
 
 An identical successful finder result is reused when code, base, contract and
 captured evidence match. Failed calls can be retried within the cap. Changed
@@ -178,9 +202,11 @@ model. Its filesystem sandbox does not replace external-service permissions.
 
 After tracks are accepted, the story branch captures fresh evidence and runs
 the `integrated` scope with `all`, including the integration scenarios. This is
-the whole-story acceptance/interactions review. Existing repo-configured plan,
-change or PR panels remain additional explicit repo policy; never run them on
-every track merely because they exist. Keep their cost/rounds in the ledger.
+the whole-story acceptance/interactions review and the default final review.
+The repo's plan and PR panels stay repo policy. Its change panel
+(`review.changes`) runs on the same commits only when the orchestrator opts the
+story in (security, personal-data or cost surface), so one change does not get
+two full Codex reviews. Never run a panel on every track. Keep cost/rounds in the ledger.
 Do not automatically run more finders because a pass was clean.
 
 At story close, record only reusable, evidence-backed lessons: repeated false

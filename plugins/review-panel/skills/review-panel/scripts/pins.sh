@@ -12,7 +12,10 @@
 # shellcheck disable=SC2034
 SUPPORTED_COMPANION_VERSIONS="1.0.6"   # codex plugin companion; verified 2026-08-19
 # shellcheck disable=SC2034
-SUPPORTED_CODEX_VERSIONS="0.153.4"     # codex CLI (`codex --version`); exec flags -s/--sandbox, -C, --color, -m, -c, -o re-verified against `codex exec --help` on 0.153.4, 2026-09-10
+# Default mode (companion over `codex app-server`). 0.167.0 is in this list so
+# one codex binary on PATH serves both modes; it was run live through the
+# companion 1.0.6 path on 2026-11-09 (scoped review of story-workflow 0.4.1).
+SUPPORTED_CODEX_VERSIONS="0.153.4 0.167.0"     # codex CLI (`codex --version`); exec flags -s/--sandbox, -C, --color, -m, -c, -o re-verified against `codex exec --help` on 0.153.4, 2026-09-10
 # Separate exec-only pin: the companion's app-server compatibility above is
 # not implied. Local `codex exec --help` checked on 0.167.0, 2026-11-08:
 # --sandbox read-only, -C, --color never, -m, -c, -o and stdin '-'. Runner

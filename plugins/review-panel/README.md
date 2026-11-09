@@ -14,7 +14,7 @@ The plugin holds:
 - Claude Code 2.1.308 or later. Tested on 2.1.312 (2026-11-02).
 - `git`, `python3` and `node` on PATH.
 - For Codex deep/plan review: codex-cli 0.167.0 and access to `gpt-6.1-sol`. Its exec flags were checked locally on 2026-11-08; runner tests use fake Codex, without a paid model call.
-- For default single-pass Codex review: codex-cli 0.153.4 and the Codex Claude Code plugin (`openai-codex`) companion 1.0.6. The exec runner and companion have separate compatibility pins in `skills/review-panel/scripts/pins.sh`; checking one does not certify the other.
+- For default single-pass Codex review: codex-cli 0.153.4 or 0.167.0 and the Codex Claude Code plugin (`openai-codex`) companion 1.0.6. With 0.167.0 one codex binary runs both modes. The pins live in `skills/review-panel/scripts/pins.sh`.
 - For `/review-panel:review-grok`: the Grok Build CLI (`curl -fsSL https://x.ai/cli/install.sh | bash`, then `grok login`) at the version in `skills/review-grok/scripts/lib.sh` (1.0.46). Grok sends the reviewed code to xAI.
 - Optional: `gh` or `az repos` to list the open sibling pull requests in the scope.
 

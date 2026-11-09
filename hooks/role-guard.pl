@@ -12,7 +12,9 @@
 # - Quote removal: 'single', "double", $'ansi', and backslash escapes.
 # - Leading VAR=value words, shell keywords and the wrappers env, command,
 #   exec, nohup, time, sudo and xargs (with their options) are dropped. A
-#   path command (/usr/bin/git) becomes its basename.
+#   path command (/usr/bin/git) becomes its basename. story-review.sh (the
+#   check recorder) is dropped with its words up to and including the first
+#   --, so the command it runs is checked.
 # - Recursion: the script after bash|sh|zsh|dash|ksh -c, the words after
 #   eval, $(...), `...`, <(...) and >(...) (also inside double quotes and
 #   unquoted heredoc bodies), and the heredoc, <<< or echo|printf text that
@@ -400,6 +402,13 @@ sub normalize {
     if ($w[0] =~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/ || $KEYWORD{$w[0]}) { shift @w; next; }
     if ($w[0] eq 'function' || $w[0] eq 'coproc') { shift @w; shift @w if @w > 1; next; }
     my $b = base($w[0]);
+    # The check recorder of this plugin runs the argv after its first --.
+    if ($b eq 'story-review.sh' || $b eq 'story-review.py') {
+      my ($i) = grep { $w[$_] eq '--' } 0 .. $#w;
+      last unless defined $i;
+      splice(@w, 0, $i + 1);
+      next;
+    }
     last unless $WRAPPER{$b};
     $VIA_XARGS = 1 if $b eq 'xargs';
     shift @w;
