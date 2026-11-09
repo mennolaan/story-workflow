@@ -241,8 +241,9 @@ and a reason. They do not become unreviewed fallbacks when a tool is missing.
 
 After merging, fresh evidence and the `integrated` review cover the complete
 story, including whether the application actually invokes the new behavior.
-The original repo-configured review panels remain additional explicit policy;
-they are not copied onto every track. A phase boundary or checkpoint alone does
+The repo's plan and PR panels remain explicit policy. The change panel
+(`review.changes`) runs on top of the integrated review only when the
+orchestrator opts the story in; panels are not copied onto every track. A phase boundary or checkpoint alone does
 not trigger a new review. Recorded false-positive dismissals require reasons and
 evidence tied to the exact review hash; acceptance gaps cannot be dismissed.
 
@@ -250,7 +251,7 @@ evidence tied to the exact review hash; acceptance gaps cannot be dismissed.
 |---|---|---|
 | `model` | Codex configured default | Optional explicit Codex model ID; independent of Claude session routing. Requested settings and raw events are recorded. |
 | `effort` | `high` | Explicit reviewer effort, so an inherited `max` is not selected accidentally. |
-| `maxRounds` | 2 | Initial review plus one follow-up per scope/approved contract; failed calls also consume attempts. |
+| `maxRounds` | 2 | Completed reviews per scope/approved contract (initial plus one follow-up), and separately the failed reviewer calls. The orchestrator opens new rounds with `story-review.sh reset <slug> <scope> <reason>`, which is logged. |
 | `maxParallel` | 3 | Separate per-story finder cap. A full queue returns exit 3 without consuming an attempt; independent implementation continues. |
 | `timeoutSeconds` | 600 | Wall-time bound for each recorded check or Codex run. Timeout stops the subprocess group and never becomes a pass. |
 | `maxCheckFailures` | 2 | Repeated failures of the same command on unchanged code stop before another retry; the orchestrator resolves the operational block. |
@@ -258,8 +259,9 @@ evidence tied to the exact review hash; acceptance gaps cannot be dismissed.
 Follow-up finders focus on the fix delta and previous findings. Exact successful
 results are reused only when revision, base, contract, evidence and requested
 review settings match. Missing/failed/malformed reviews remain unavailable, not
-clean. At the attempt cap, escalate the evidence and rethink the cause instead
-of renaming a scope or spinning an unlimited review/fix loop.
+clean. At the round cap, escalate the evidence to the orchestrator. It resets the
+scope with a reason when the fixes converge, or takes a design problem to the
+user; never rename a scope or spin an unlimited review/fix loop.
 
 The helper checks record integrity and coverage. It cannot prove that a human or
 model's judgment is correct, or make an arbitrary test command meaningful. Its

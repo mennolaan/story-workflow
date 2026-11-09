@@ -44,7 +44,9 @@ requested setting as verified from the brief alone.
 - Each foundation/track/integrated scope: task ids, reviewed head/tree, check
   records, initial/final findings, judge dismissals with reasons/evidence, receipt.
 - Queue/limits: running finder count, queued scopes and retry-only next action;
-  stop cause at the round/check limit. Never hide a missing/failed review as pass.
+  stop cause at the round/check limit, and each `reset` with its reason. Never
+  hide a missing/failed review as pass.
+- Change panel: opted in or not, with the reason (`{{REVIEW_CHANGES}}`).
 - Criteria still unverified, including browser/database proof.
 - Lessons worth retaining: observed failure, cause and one concrete improvement;
   link to detail rather than loading every session's retrospective.

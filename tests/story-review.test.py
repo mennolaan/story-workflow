@@ -3,6 +3,8 @@
 import fcntl
 import json
 import os
+import signal
+import time
 from pathlib import Path
 import subprocess
 import sys
@@ -362,7 +364,8 @@ class ReviewTest(unittest.TestCase):
         self.review(FAKE_MODE="fail", error="Codex review failed")
         self.review("gate", error="missing or stale review")
         recovered = self.review()
-        self.assertEqual(recovered["round"], 2)
+        # A failed call is not a round; it is bounded separately.
+        self.assertEqual(recovered["round"], 1)
         prompt = (Path(recovered["result"]).parent / "prompt.txt").read_text()
         self.assertEqual(json.loads(prompt.split("\n", 1)[1])["focusDiffBase"], self.base)
 
@@ -414,6 +417,124 @@ class ReviewTest(unittest.TestCase):
         self.check(criteria="STORY", scope="integrated")
         self.call("run", "story", "integrated", "all", self.base)
         self.call("gate", "story", "integrated", "all", self.base)
+
+    def test_failed_calls_are_bounded_without_using_rounds(self):
+        self.check()
+        self.review(FAKE_MODE="fail", error="Codex review failed")
+        self.review(FAKE_MODE="fail", error="Codex review failed")
+        self.review(error="failed reviewer calls")
+
+    def test_reset_reopens_a_scope_after_the_round_limit(self):
+        self.all_checks()
+        self.integrated(FAKE_MODE="finding")
+        for number in (1, 2):
+            (self.repo / "src/a.txt").write_text("fix " + str(number) + "\n")
+            self.commit("fix")
+            self.all_checks()
+            self.integrated(FAKE_MODE="finding", error=None if number == 1 else "REVIEW LIMIT")
+        self.integrated(error="REVIEW LIMIT")
+        self.call("reset", "story", "integrated", "converging fixes", error="only the orchestrator")
+        self.bind("orchestrator")
+        self.call("reset", "story", "integrated", " ", error="only the orchestrator")
+        reset = self.call("reset", "story", "integrated", "second docket fix; findings converge")
+        self.assertEqual(reset["status"], "REVIEW RESET")
+        self.bind("implement")
+        self.assertEqual(self.integrated()["round"], 1)
+        self.assertEqual(self.integrated("gate")["status"], "REVIEW OK")
+        history = json.loads((self.plans / ".sessions/review-story/integrated.json").read_text())
+        self.assertEqual(history["resets"][0]["reason"], "second docket fix; findings converge")
+
+    def test_freeze_refuses_a_handoff_criterion_across_groups(self):
+        self.bind("orchestrator")
+        self.contract["criteria"].append({"id": "X", "tasks": ["102", "103"], "stage": "handoff",
+                                          "requirement": "spans", "verification": "v"})
+        self.write(self.source, self.contract)
+        self.call("freeze", "story", str(self.source), error="spans tasks of different safe groups")
+        self.contract["criteria"][-1]["stage"] = "integration"
+        self.write(self.source, self.contract)
+        self.call("freeze", "story", str(self.source))
+
+    def test_freeze_refuses_checks_only_outside_a_track(self):
+        self.bind("orchestrator")
+        for task in ("101", "104"):
+            self.contract["checksOnly"] = {task: "trivial"}
+            self.write(self.source, self.contract)
+            self.call("freeze", "story", str(self.source), error="checksOnly applies only to tasks of a track")
+
+    def test_check_command_secrets_are_redacted(self):
+        secret = "sk-live-0123456789abcdef"
+        code = "import sys; print('ok')"
+        record = self.call("check", "story", "track-A", "AC102", "--", sys.executable, "-c", code,
+                           "Authorization: Bearer " + secret, "https://u:" + "p4ssw0rd" + "@host/x", "token=" + "abcdef123456",
+                           API_TOKEN=secret)
+        stored = json.dumps(record["command"])
+        for leaked in (secret, "p4ssw0rd", "abcdef123456"):
+            self.assertNotIn(leaked, stored)
+        self.assertIn("$API_TOKEN", stored)
+        report = self.review(API_TOKEN=secret)
+        prompt = (Path(report["result"]).parent / "prompt.txt").read_text()
+        self.assertNotIn(secret, prompt)
+
+    def wait_for(self, predicate, seconds=10):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            value = predicate()
+            if value:
+                return value
+            time.sleep(0.05)
+        self.fail("condition not reached")
+
+    def running_attempt(self):
+        receipt = self.plans / ".sessions/review-story/track-A.json"
+        try:
+            attempts = json.loads(receipt.read_text())["attempts"]
+        except (OSError, ValueError):
+            return None
+        return attempts[-1] if attempts and attempts[-1].get("pgid") else None
+
+    def alive(self, pgid):
+        try:
+            os.killpg(pgid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    def test_terminated_recorder_stops_the_reviewer(self):
+        self.check()
+        recorder = subprocess.Popen([str(RUNNER), "run", "story", "track-A", "102", self.base], cwd=self.repo,
+                                    env={**self.env, "FAKE_MODE": "timeout"}, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pgid = self.wait_for(self.running_attempt)["pgid"]
+        self.assertTrue(self.alive(pgid))
+        recorder.send_signal(signal.SIGTERM)
+        _, stderr = recorder.communicate(timeout=10)
+        self.assertIn(b"interrupted", stderr)
+        self.wait_for(lambda: not self.alive(pgid))
+        self.assertEqual(self.running_attempt()["exitCode"], "interrupted")
+        self.assertEqual(self.review()["round"], 1)
+
+    def test_killed_recorder_orphan_is_stopped_before_a_retry(self):
+        self.check()
+        recorder = subprocess.Popen([str(RUNNER), "run", "story", "track-A", "102", self.base], cwd=self.repo,
+                                    env={**self.env, "FAKE_MODE": "timeout"}, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    start_new_session=True)
+        pgid = self.wait_for(self.running_attempt)["pgid"]
+        os.killpg(recorder.pid, signal.SIGKILL)
+        recorder.communicate(timeout=10)
+        self.assertTrue(self.alive(pgid))
+        self.assertEqual(self.review()["round"], 1)
+        self.assertFalse(self.alive(pgid))
+
+    def test_orphan_cleanup_spares_a_reused_pid(self):
+        self.check()
+        frozen = json.loads((self.plans / ".sessions/review-story/contract.json").read_text())
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", "codex", "-o", "/elsewhere/result.json"],
+                                 start_new_session=True)
+        self.addCleanup(other.kill)
+        receipt = self.plans / ".sessions/review-story/track-A.json"
+        self.write(receipt, {"attempts": [{"contractHash": frozen["hash"], "inputs": "stale", "pgid": other.pid,
+                                           "result": str(self.plans / "story.d/reviews/track-A/review-gone/result.json")}]})
+        self.assertEqual(self.review()["round"], 1)
+        self.assertTrue(self.alive(other.pid))
 
 
 if __name__ == "__main__":
