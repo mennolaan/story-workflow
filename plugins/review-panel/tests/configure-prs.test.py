@@ -52,6 +52,44 @@ if args[:2] == ["devops", "invoke"]:
 sys.stderr.write("fake az: unhandled " + " ".join(args) + "\n"); sys.exit(1)
 '''
 
+
+FAKE_CLAUDE = r"""#!/usr/bin/env python3
+import json, os, re, subprocess, sys
+prompt = sys.stdin.read()
+record = {"argv": sys.argv[1:], "cwd": os.getcwd(),
+          "host": os.environ.get("CLAUDE_CODE_HOST_SESSION_ID"), "effortEnv": os.environ.get("CLAUDE_CODE_EFFORT_LEVEL")}
+open(os.environ["FAKE_CLAUDE_LOG"], "w").write(json.dumps(record))
+print(json.dumps({"type": "system", "subtype": "init", "model": sys.argv[sys.argv.index("--model") + 1]}))
+w, key, docket = re.search(r'python3 (\S+) post (\S+) "([^"]+)"`', prompt).groups()
+head = re.search(r"Reviewed head: ([0-9a-f]{40})", prompt).group(1)
+if os.environ.get("FAKE_CLAUDE_MODE", "post") == "post":
+    open(docket, "w").write(json.dumps({"head": head, "summary": "Approved with comments.", "items": [
+        {"polarity": "Should fix", "file": "src/a.txt", "line": 21, "body": "verified issue"}]}))
+    subprocess.run([sys.executable, w, "post", key, docket], check=True, capture_output=True)
+    last = "REVIEWED approved-with-comments 1"
+else:
+    last = "FAILED could not verify"
+print(json.dumps({"type": "result", "subtype": "success", "total_cost_usd": 0.42, "result": "done\n" + last}))
+"""
+
+FAKE_PREPARE = """#!/usr/bin/env bash
+set -eu
+base="$1"; head="$2"; out=""; while [ $# -gt 0 ]; do case "$1" in --out) out="$2"; shift 2 ;; *) shift ;; esac; done
+mkdir -p "$out/heads"; printf '## Verified facts\\n' > "$out/facts.md"
+git diff "$base" "$head" > "$out/diff.patch" 2>/dev/null || true; printf '# Review scope\\n' > "$out/scope.md"; echo "$out"
+"""
+
+FAKE_HEADS = """#!/usr/bin/env bash
+set -eu
+scope="$1"; heads="$3"
+printf '%s\\n' "$heads" > "$scope/heads/requested.txt"
+printf 'head\\texit\\tbytes\\tstarted\\tfinished\\n' > "$scope/heads/status.tsv"
+for h in ${heads//,/ }; do
+  if [ "${FAKE_HEADS_MODE:-ok}" = ok ]; then echo "### F1" > "$scope/heads/$h.out.md"; printf '%s\\t0\\t6\\tx\\ty\\n' "$h" >> "$scope/heads/status.tsv"
+  else printf '%s\\t1\\t0\\tx\\ty\\n' "$h" >> "$scope/heads/status.tsv"; fi
+done
+"""
+
 ORG = "https://dev.azure.com/contoso"
 
 
@@ -77,6 +115,15 @@ class WatchTest(unittest.TestCase):
         self.env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
                     "FAKE_AZ_STATE": str(self.state_path), "FAKE_AZ_LOG": str(self.log),
                     "REVIEW_WATCH_HOME": str(self.root / "home")}
+        (bin_dir / "claude").write_text(FAKE_CLAUDE)
+        (bin_dir / "claude").chmod(0o755)
+        panel = self.root / "panel"
+        panel.mkdir()
+        for name, body in (("prepare-scope.sh", FAKE_PREPARE), ("run-heads.sh", FAKE_HEADS)):
+            (panel / name).write_text(body)
+            (panel / name).chmod(0o755)
+        self.env.update({"FAKE_CLAUDE_LOG": str(self.root / "claude.json"), "REVIEW_WATCH_PANEL_SCRIPTS": str(panel),
+                         "CLAUDE_CODE_HOST_SESSION_ID": "local_parent", "CLAUDE_CODE_EFFORT_LEVEL": "max"})
         self.az_state = {"account": {"user": {"name": "Sam@Contoso.com"}}, "prs": {}, "threads": {}}
         self.save()
 
@@ -292,6 +339,14 @@ class WatchTest(unittest.TestCase):
             self.assertIn(reason, self.run_watch("post", self.key, docket, code=1).stderr)
         self.assertEqual(self.load()["threads"].get("repo-Webshop/7", []), [])
 
+    def test_post_names_a_missing_or_broken_docket(self):
+        self.remote_repo()
+        self.checkout()
+        self.assertIn("no file at", self.run_watch("post", self.key, str(self.root / "nope.json"), code=1).stderr)
+        bad = self.root / "bad.json"
+        bad.write_text("{not json")
+        self.assertIn("not valid JSON", self.run_watch("post", self.key, str(bad), code=1).stderr)
+
     def test_post_caps_inline_comments_and_dry_run_posts_nothing(self):
         self.remote_repo()
         self.checkout()
@@ -321,6 +376,88 @@ class WatchTest(unittest.TestCase):
         tree = Path(self.checkout()["worktree"])
         self.run_watch("cleanup", self.key)
         self.assertFalse(tree.exists())
+
+    # ------------------------------------------------------------------ review
+
+    def review(self, **env):
+        out = self.run_watch("review", self.key, **env).stdout
+        return json.loads(out.strip().splitlines()[-1])
+
+    def test_review_runs_nine_heads_and_an_opus_judge_that_posts(self):
+        self.remote_repo()
+        row = self.review()
+        self.assertEqual(row["status"], "reviewed", row)
+        self.assertEqual(row["judge"]["model"], "claude-opus-5-5")
+        self.assertEqual(row["judge"]["costUsd"], 0.42)
+        self.assertEqual(row["judge"]["lastLine"], "REVIEWED approved-with-comments 1")
+        self.assertEqual(len(row["heads"]), 9)
+        claude = json.loads((self.root / "claude.json").read_text())
+        argv = claude["argv"]
+        opt = lambda name: argv[argv.index(name) + 1]
+        self.assertEqual((opt("--model"), opt("--effort"), opt("--autocompact")), ("claude-opus-5-5", "medium", "500k"))
+        self.assertEqual(opt("--permission-mode"), "acceptEdits")
+        self.assertNotIn("--max-budget-usd", argv)
+        tools = argv[argv.index("--allowedTools") + 1:]
+        self.assertTrue(any(t.startswith("Bash(python3 ") and t.endswith(" post:*)") for t in tools))
+        self.assertFalse(any(t in ("Bash", "Write", "Edit") or "push" in t for t in tools))
+        self.assertIsNone(claude["host"])
+        self.assertIsNone(claude["effortEnv"])
+        scope = Path(row["judge"]["log"][:-len(".judge.jsonl")])
+        self.assertTrue(Path(claude["cwd"]).name.endswith("-pr7"))
+        self.assertEqual(Path(argv[argv.index("--add-dir") + 1]).resolve(), scope.resolve())
+        self.assertIn("Bash(git diff:*)", tools)
+        self.assertFalse(any("-C" in t for t in tools))
+        self.assertEqual((scope / "heads/requested.txt").read_text().strip(),
+                         "delivery,dependency,identity,parity,situate,reach,falsify,conform,invariants")
+        self.assertIn("review-watch head " + self.head, self.load()["threads"]["repo-Webshop/7"][-1]["comments"][0]["content"])
+        self.assertFalse(list((self.root / "home/worktrees").iterdir()))
+        self.assertEqual(json.loads(self.run_watch("candidates").stdout), [])
+        again = self.review()
+        self.assertEqual((again["status"], again["reason"]), ("skipped", "this head is already reviewed"))
+
+    def test_a_judge_that_does_not_post_is_a_failure(self):
+        self.remote_repo()
+        for count in (1, 2):
+            row = self.review(FAKE_CLAUDE_MODE="nopost")
+            self.assertEqual((row["status"], row["failures"]), ("failed", count))
+            self.assertIn("FAILED could not verify", row["reason"])
+        self.assertEqual(json.loads(self.run_watch("candidates").stdout), [])
+
+    def test_no_head_output_fails_before_the_judge(self):
+        self.remote_repo()
+        row = self.review(FAKE_HEADS_MODE="fail")
+        self.assertEqual(row["status"], "failed")
+        self.assertIn("no Codex head produced output", row["reason"])
+        self.assertFalse((self.root / "claude.json").exists())
+
+    def test_a_too_large_pr_gets_a_summary_and_no_review(self):
+        self.remote_repo()
+        cfg_path = self.root / "home/config.json"
+        cfg = json.loads(cfg_path.read_text())
+        cfg["maxFiles"] = 1
+        cfg_path.write_text(json.dumps(cfg))
+        row = self.review()
+        self.assertEqual(row["status"], "too-big")
+        summary = self.load()["threads"]["repo-Webshop/7"][-1]["comments"][0]["content"]
+        self.assertIn("Not reviewed automatically", summary)
+        self.assertFalse((self.root / "claude.json").exists())
+
+    def test_review_settings_are_configurable_and_checked(self):
+        cfg = json.loads(self.run_watch("setup", ORG + "/Webshop", "--model", "claude-sonnet-5-5", "--effort", "high",
+                                        "--context-cap", "300k", "--max-budget-usd", "3", "--heads", "delivery,conform").stdout)
+        self.assertEqual((cfg["reviewModel"], cfg["reviewEffort"], cfg["contextCap"], cfg["maxBudgetUsd"], cfg["heads"]),
+                         ("claude-sonnet-5-5", "high", "300k", 3.0, ["delivery", "conform"]))
+        self.assertIn("--heads takes names", self.run_watch("setup", ORG + "/Webshop", "--heads", "delivery,bogus", code=1).stderr)
+        self.assertIn("--effort", self.run_watch("setup", ORG + "/Webshop", "--effort", "huge", code=1).stderr)
+        self.assertIn("--context-cap", self.run_watch("setup", ORG + "/Webshop", "--context-cap", "lots", code=1).stderr)
+
+    def test_a_spend_cap_reaches_the_judge(self):
+        self.remote_repo()
+        self.run_watch("setup", ORG + "/Webshop", "--max-budget-usd", "2.5")
+        self.review()
+        argv = json.loads((self.root / "claude.json").read_text())["argv"]
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "2.5")
+        self.assertEqual(argv[argv.index("--model") + 1], "claude-opus-5-5")
 
 
 if __name__ == "__main__":

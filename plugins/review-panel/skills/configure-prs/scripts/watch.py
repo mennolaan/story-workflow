@@ -15,6 +15,10 @@ it calls `az` and `git`. Subcommands:
   post <key> <docket.json> [--dry-run]     post the inline threads and the marked summary
   fail <key> <head> <reason>               record a failed review of that head
   cleanup <key>                            remove the PR worktree
+  review <key> [<key> ...]                 the whole review of each PR: checkout,
+                                           scope, Codex heads (no model), then a
+                                           headless Claude judge that posts; one
+                                           JSON line per PR
 
 A key is org/project/repositoryId/pullRequestId. Exit codes: 0 ok, 1 error,
 2 az is not logged in, 3 repeated az failures while polling, 4 another session
@@ -41,7 +45,23 @@ POLARITIES = ("Blocking", "Should fix", "Nit", "FYI")
 INLINE = ("Blocking", "Should fix")
 DEFAULTS = {"intervalSeconds": 1800, "days": [1, 2, 3, 4, 5], "hours": [8, 18],
             "maxComments": 10, "maxFiles": 60, "maxLines": 3000, "maxFailures": 2,
-            "apiVersion": "7.1"}
+            "apiVersion": "7.1",
+            # The judge: a headless Claude Code run per PR (Desktop cannot start
+            # a session from a turn a background task woke). contextCap is its
+            # auto-compact window; maxBudgetUsd an optional spend cap per PR.
+            "reviewModel": "claude-opus-5-5", "reviewEffort": "medium", "contextCap": "500k",
+            "maxBudgetUsd": None, "reviewTimeoutMinutes": 60,
+            # The finders: review-panel deep mode, one Codex run per head.
+            "heads": ["delivery", "dependency", "identity", "parity", "situate", "reach", "falsify",
+                      "conform", "invariants"],
+            "headsTimeoutMinutes": 20}
+SKILL_DIR = Path(__file__).resolve().parents[1]
+JUDGE_PROMPT = SKILL_DIR / "judge-prompt.md"
+PANEL_SKILL = SKILL_DIR.parent / "review-panel" / "SKILL.md"
+
+
+def panel_scripts():
+    return Path(os.environ.get("REVIEW_WATCH_PANEL_SCRIPTS") or SKILL_DIR.parent / "review-panel" / "scripts")
 
 
 class Stop(Exception):
@@ -233,6 +253,21 @@ def cmd_setup(args):
         if not 0 <= start < end <= 24:
             raise Stop("--hours is start-end, for example 8-18")
         cfg["hours"] = [start, end]
+    for name, value in (("reviewModel", args.model), ("reviewEffort", args.effort),
+                        ("contextCap", args.context_cap), ("maxBudgetUsd", args.max_budget_usd)):
+        if value is not None:
+            cfg[name] = value
+    if cfg["reviewEffort"] not in ("low", "medium", "high", "xhigh", "max"):
+        raise Stop("--effort is low, medium, high, xhigh or max")
+    if not re.fullmatch(r"\d+k|\d+", str(cfg["contextCap"])):
+        raise Stop("--context-cap is a token count such as 500k")
+    if args.heads:
+        known = {h.stem for h in (SKILL_DIR.parent / "review-panel" / "heads").glob("*.md") if not h.stem.startswith("_")}
+        heads = [h.strip() for h in args.heads.split(",") if h.strip()]
+        unknown = [h for h in heads if h not in known]
+        if unknown or not heads:
+            raise Stop("--heads takes names from: " + ", ".join(sorted(known)))
+        cfg["heads"] = heads
     if args.interval:
         if args.interval < 300:
             raise Stop("--interval is at least 300 seconds")
@@ -354,9 +389,9 @@ def worktree_dir(k, repo):
     return home() / "worktrees" / "-".join(safe(x) for x in (k["org"], k["project"], repo, "pr" + str(k["prId"])))
 
 
-def cmd_checkout(args):
+def checkout(key, previous=None):
     cfg = config()
-    k = split_key(args.key)
+    k = split_key(key)
     pr = pr_show(k)
     repo = pr["repository"]["name"]
     head = pr["lastMergeSourceCommit"]["commitId"]
@@ -378,20 +413,24 @@ def cmd_checkout(args):
         subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=clone, capture_output=True)
     git("worktree", "prune", cwd=clone)
     git("worktree", "add", "--quiet", "--detach", str(tree), head, cwd=clone)
-    set_claim(args.key, head, True)
+    set_claim(key, head, True)
     base = git("merge-base", "origin/" + short, head, cwd=clone)
     range_base = base
-    if args.previous:
-        ok = subprocess.run(["git", "merge-base", "--is-ancestor", args.previous, head], cwd=clone,
+    if previous:
+        ok = subprocess.run(["git", "merge-base", "--is-ancestor", previous, head], cwd=clone,
                             capture_output=True).returncode == 0
         if ok:
-            range_base = args.previous
+            range_base = previous
     stat = git("diff", "--numstat", range_base, head, cwd=clone).splitlines()
     lines = sum(int(a) + int(b) for a, b, _ in (row.split("\t", 2) for row in stat) if a.isdigit() and b.isdigit())
     too_big = len(stat) > cfg["maxFiles"] or lines > cfg["maxLines"]
-    print(json.dumps({"worktree": str(tree), "clone": str(clone), "repo": repo, "head": head, "base": base,
-                      "rangeBase": range_base, "delta": range_base != base, "files": len(stat),
-                      "changedLines": lines, "tooBig": too_big, "target": "origin/" + short}, indent=2))
+    return {"worktree": str(tree), "clone": str(clone), "repo": repo, "head": head, "base": base,
+            "rangeBase": range_base, "delta": range_base != base, "files": len(stat),
+            "changedLines": lines, "tooBig": too_big, "target": "origin/" + short}
+
+
+def cmd_checkout(args):
+    print(json.dumps(checkout(args.key, args.previous), indent=2))
 
 
 def cmd_threads(args):
@@ -441,18 +480,23 @@ def validate(docket, tree, head):
     return items
 
 
-def cmd_post(args):
+def post(key, docket_path, dry_run=False):
     cfg = config()
-    k = split_key(args.key)
+    k = split_key(key)
     pr = pr_show(k)
     head = pr["lastMergeSourceCommit"]["commitId"]
     tree = worktree_dir(k, pr["repository"]["name"])
-    docket = read_json(args.docket)
+    try:
+        docket = read_json(docket_path)
+    except ValueError as error:
+        raise Stop("docket: {} is not valid JSON: {}".format(docket_path, error))
+    if docket is None:
+        raise Stop("docket: no file at {}; write it first".format(docket_path))
     items = validate(docket, tree, head)
     if pr.get("status") != "active" or pr.get("isDraft"):
         raise Stop("the PR is no longer active and ready; nothing posted")
     st = state()
-    done = set(st["posted"].get(args.key, {}).get(head, []))
+    done = set(st["posted"].get(key, {}).get(head, []))
     inline = [i for i in items if i["polarity"] in INLINE]
     rest = [i for i in items if i["polarity"] not in INLINE]
     overflow = inline[cfg["maxComments"]:]
@@ -477,9 +521,8 @@ def cmd_post(args):
     lines += ["", "<sub>Automated review: review-panel (Codex finder, Claude judge). It never votes. "
               + MARKER + head + "</sub>"]
     summary = {"comments": [{"parentCommentId": 0, "commentType": 1, "content": "\n".join(lines)}], "status": 4}
-    if args.dry_run:
-        print(json.dumps({"inline": [p for _, p in payloads], "summary": summary}, indent=2))
-        return
+    if dry_run:
+        return {"inline": [p for _, p in payloads], "summary": summary}
     route = ["--route-parameters", "project=" + k["project"], "repositoryId=" + k["repoId"],
              "pullRequestId=" + str(k["prId"])]
     for fp, payload in payloads:
@@ -490,7 +533,7 @@ def cmd_post(args):
                *route, "--http-method", "POST", "--api-version", cfg["apiVersion"], input_file=f.name)
         finally:
             os.unlink(f.name)
-        st["posted"].setdefault(args.key, {}).setdefault(head, []).append(fp)
+        st["posted"].setdefault(key, {}).setdefault(head, []).append(fp)
         write_json(home() / "state.json", st)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(summary, f)
@@ -499,31 +542,196 @@ def cmd_post(args):
            *route, "--http-method", "POST", "--api-version", cfg["apiVersion"], input_file=f.name)
     finally:
         os.unlink(f.name)
-    st["failures"].get(args.key, {}).pop(head, None)
-    st["posted"].get(args.key, {}).pop(head, None)
-    st["claims"].pop(args.key, None)
+    st["failures"].get(key, {}).pop(head, None)
+    st["posted"].get(key, {}).pop(head, None)
+    st["claims"].pop(key, None)
     write_json(home() / "state.json", st)
-    print(json.dumps({"posted": len(payloads), "summary": True, "head": head, "url": pr_url(
-        {**k, "repo": pr["repository"]["name"]})}))
+    return {"posted": len(payloads), "summary": True, "head": head,
+            "url": pr_url({**k, "repo": pr["repository"]["name"]})}
+
+
+def cmd_post(args):
+    result = post(args.key, args.docket, args.dry_run)
+    print(json.dumps(result, indent=2 if args.dry_run else None))
+
+
+def fail(key, head, reason):
+    st = state()
+    count = st["failures"].setdefault(key, {}).get(head, 0) + 1
+    st["failures"][key][head] = count
+    st["claims"].pop(key, None)
+    write_json(home() / "state.json", st)
+    return {"key": key, "head": head, "failures": count, "reason": reason}
 
 
 def cmd_fail(args):
-    st = state()
-    count = st["failures"].setdefault(args.key, {}).get(args.head, 0) + 1
-    st["failures"][args.key][args.head] = count
-    st["claims"].pop(args.key, None)
-    write_json(home() / "state.json", st)
-    print(json.dumps({"key": args.key, "head": args.head, "failures": count, "reason": args.reason}))
+    print(json.dumps(fail(args.key, args.head, args.reason)))
 
 
-def cmd_cleanup(args):
-    k = split_key(args.key)
-    set_claim(args.key, None, False)
+def cleanup(key):
+    k = split_key(key)
+    set_claim(key, None, False)
+    removed = []
     for tree in (home() / "worktrees").glob("-".join(safe(x) for x in (k["org"], k["project"])) + "-*-pr" + str(k["prId"])):
         common = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=tree, capture_output=True, text=True).stdout.strip()
         clone = Path(tree, common).resolve().parent if common else None
         subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=clone, capture_output=True)
-        print(json.dumps({"removed": str(tree)}))
+        removed.append(str(tree))
+    return removed
+
+
+def cmd_cleanup(args):
+    for tree in cleanup(args.key):
+        print(json.dumps({"removed": tree}))
+
+
+def run_bounded(argv, cwd, log, timeout, env=None, input_text=None):
+    """Run with a wall-time bound; stop the whole process group on timeout."""
+    with open(log, "w") as out:
+        process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT,
+                                   stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+                                   start_new_session=True, text=True)
+        try:
+            process.communicate(input_text, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            for sig in (15, 9):
+                try:
+                    os.killpg(process.pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                time.sleep(1)
+            process.wait()
+            return 124
+        except BaseException:
+            try:
+                os.killpg(process.pid, 9)
+            except (ProcessLookupError, PermissionError):
+                pass
+            raise
+    return process.returncode
+
+
+def run_panel(info, k, cfg, scope):
+    """The no-model half: scope and the Codex heads (review-panel deep mode)."""
+    tree = info["worktree"]
+    p = panel_scripts()
+    scope.parent.mkdir(parents=True, exist_ok=True)
+    code = run_bounded([str(p / "prepare-scope.sh"), info["rangeBase"], info["head"], "--pr", str(k["prId"]),
+                        "--out", str(scope)], tree, str(scope) + ".prepare.log", 600)
+    if code != 0:
+        raise Stop("prepare-scope.sh failed; see " + str(scope) + ".prepare.log")
+    with (scope / "facts.md").open("a") as facts:
+        facts.write("\n- Automated watch run (configure-prs): no upstream lookup was made. "
+                    "Report a load-bearing upstream claim as a fact-sheet gap.\n")
+    code = run_bounded([str(p / "run-heads.sh"), str(scope), "--heads", ",".join(cfg["heads"])], tree,
+                       str(scope) + ".heads.log", cfg["headsTimeoutMinutes"] * 60)
+    status = scope / "heads" / "status.tsv"
+    rows = [line.split("\t") for line in status.read_text().splitlines()[1:]] if status.exists() else []
+    usable = [r[0] for r in rows if len(r) > 2 and r[1] == "0" and r[2].isdigit() and int(r[2]) > 0]
+    if not usable:
+        raise Stop("no Codex head produced output (exit {}); see {}.heads.log".format(code, scope))
+    return {"heads": usable, "failedHeads": [r[0] for r in rows if r and r[0] not in usable]}
+
+
+def judge_prompt(values):
+    text = JUDGE_PROMPT.read_text()
+    for name, value in values.items():
+        text = text.replace("{{" + name + "}}", str(value))
+    return text
+
+
+def run_judge(info, k, cfg, scope, pr, panel):
+    """The model half: one headless Claude Code run that judges and posts."""
+    w = Path(__file__).resolve()
+    tree = info["worktree"]
+    docket = scope / "docket.json"
+    prompt = judge_prompt({
+        "URL": pr_url({**k, "repo": info["repo"]}), "TITLE": pr.get("title", ""),
+        "AUTHOR": (pr.get("createdBy") or {}).get("displayName", ""), "KEY": "/".join(
+            [k["org"], k["project"], k["repoId"], str(k["prId"])]),
+        "HEAD": info["head"], "RANGE_BASE": info["rangeBase"], "DELTA": "yes" if info["delta"] else "no",
+        "WORKTREE": tree, "SCOPE": scope, "DOCKET": docket, "W": w, "PANEL_SKILL": PANEL_SKILL,
+        "HEADS": ", ".join(panel["heads"]), "FAILED_HEADS": ", ".join(panel["failedHeads"]) or "none",
+        "MAX_COMMENTS": cfg["maxComments"]})
+    # Claude Code reads `git -C <dir>` as git in another folder and blocks it,
+    # so the judge runs in the checkout and gets plain read-only git commands.
+    git_reads = ["Bash(git {}:*)".format(sub) for sub in ("diff", "show", "log", "grep", "blame", "ls-files")]
+    argv = [os.environ.get("REVIEW_WATCH_CLAUDE", "claude"), "-p", "--model", cfg["reviewModel"],
+            "--effort", cfg["reviewEffort"], "--autocompact", str(cfg["contextCap"]),
+            "--permission-mode", "acceptEdits", "--add-dir", str(scope),
+            "--output-format", "stream-json", "--verbose",
+            "--append-system-prompt", "This is a non-interactive automated review run. Ignore personal "
+            "instructions about session titles, task lists, overview panes or asking the user.",
+            "--allowedTools", "Read", "Grep", "Glob",
+            "Bash(python3 {} threads:*)".format(w), "Bash(python3 {} post:*)".format(w), *git_reads]
+    if cfg.get("maxBudgetUsd"):
+        argv[2:2] = ["--max-budget-usd", str(cfg["maxBudgetUsd"])]
+    env = {name: value for name, value in os.environ.items()
+           if name not in ("CLAUDE_CODE_HOST_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_CODE_SUBAGENT_MODEL")}
+    log = str(scope) + ".judge.jsonl"
+    # acceptEdits lets the judge write only in its working folders: the
+    # throwaway checkout and the scope dir (the docket). `post` checks every
+    # line against the commit, not the checkout. Only the listed commands run.
+    code = run_bounded(argv, tree, log, cfg["reviewTimeoutMinutes"] * 60, env=env, input_text=prompt)
+    result = {}
+    for line in Path(log).read_text().splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            result["model"] = event.get("model")
+        if event.get("type") == "result":
+            result.update({"outcome": event.get("subtype"), "costUsd": event.get("total_cost_usd"),
+                           "lastLine": (str(event.get("result") or "").strip().splitlines() or [""])[-1][:300]})
+    result.update({"exitCode": code, "log": log})
+    return result
+
+
+def review_one(key, cfg):
+    k = split_key(key)
+    pr = pr_show(k)
+    head = pr["lastMergeSourceCommit"]["commitId"]
+    row = {"key": key, "url": pr_url({**k, "repo": pr["repository"]["name"]}), "title": pr.get("title", ""),
+           "head": head}
+    if pr.get("status") != "active" or pr.get("isDraft") or mine(pr, cfg) or bot(pr, cfg):
+        return {**row, "status": "skipped", "reason": "not an active, ready PR by a teammate"}
+    done = markers(threads(k, cfg))
+    if head in done:
+        return {**row, "status": "skipped", "reason": "this head is already reviewed"}
+    scope = home() / "scopes" / "{}-pr{}-{}".format(safe(k["project"]), k["prId"], head[:12])
+    try:
+        info = checkout(key, done[-1] if done else None)
+        if info["tooBig"]:
+            scope.mkdir(parents=True, exist_ok=True)
+            write_json(scope / "docket.json", {"head": head, "items": [], "summary": (
+                "Not reviewed automatically: {} files and {} changed lines are above the limit of {} files "
+                "or {} lines. Please ask a teammate for a review.").format(
+                    info["files"], info["changedLines"], cfg["maxFiles"], cfg["maxLines"])})
+            post(key, scope / "docket.json")
+            return {**row, "status": "too-big", "files": info["files"], "changedLines": info["changedLines"]}
+        panel = run_panel(info, k, cfg, scope)
+        judged = run_judge(info, k, cfg, scope, pr, panel)
+        if head not in markers(threads(k, cfg)):
+            reason = "the judge did not post ({})".format(judged.get("lastLine") or judged.get("outcome") or "no result")
+            return {**row, "status": "failed", "reason": reason, **panel, "judge": judged,
+                    "failures": fail(key, head, reason)["failures"]}
+        return {**row, "status": "reviewed", "delta": info["delta"], **panel, "judge": judged}
+    except Stop as error:
+        if error.code == 2:
+            raise
+        return {**row, "status": "failed", "reason": str(error), "failures": fail(key, head, str(error))["failures"]}
+    except subprocess.CalledProcessError as error:
+        reason = "{} failed: {}".format(" ".join(error.cmd[:3]), (error.stderr or "").strip()[:300])
+        return {**row, "status": "failed", "reason": reason, "failures": fail(key, head, reason)["failures"]}
+    finally:
+        cleanup(key)
+
+
+def cmd_review(args):
+    cfg = config()
+    for key in args.keys:
+        print(json.dumps(review_one(key, cfg)), flush=True)
 
 
 def main():
@@ -534,6 +742,11 @@ def main():
     p.add_argument("--me", action="append")
     p.add_argument("--skip", action="append", help="an author (email, id or display name) never reviewed")
     p.add_argument("--hours")
+    p.add_argument("--model", help="judge model id, default claude-opus-5-5")
+    p.add_argument("--effort", help="judge effort, default medium")
+    p.add_argument("--context-cap", help="judge auto-compact window, default 500k")
+    p.add_argument("--max-budget-usd", type=float, help="optional spend cap per PR for the judge")
+    p.add_argument("--heads", help="comma-separated review-panel heads, default the 9")
     p.add_argument("--interval", type=int)
     sub.add_parser("show")
     sub.add_parser("check")
@@ -557,6 +770,8 @@ def main():
     p.add_argument("reason")
     p = sub.add_parser("cleanup")
     p.add_argument("key")
+    p = sub.add_parser("review")
+    p.add_argument("keys", nargs="+")
     args = parser.parse_args()
     try:
         globals()["cmd_" + args.command](args)
