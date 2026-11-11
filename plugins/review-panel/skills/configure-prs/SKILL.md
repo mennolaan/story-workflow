@@ -1,6 +1,6 @@
 ---
 name: configure-prs
-description: Set up and start automatic reviews of your teammates' Azure DevOps pull requests, from a session in any repo. Asks for the Azure DevOps project URL, saves it for this machine and starts polling at once. A no-model poller checks every 30 minutes on weekdays and wakes this session only when a PR that is not yours, not a draft and not from a pipeline has commits it has not reviewed; the session then runs the review-panel review (Codex finds, this session judges) and posts the comments on the PR. Run it again in a new session to resume with the saved config. Use when the user runs /review-panel:configure-prs or wants teammates' PRs reviewed automatically.
+description: Set up and start automatic reviews of your teammates' Azure DevOps pull requests, from a session in any repo. Asks for the Azure DevOps project URL, saves it for this machine and starts polling at once. A no-model poller checks every 30 minutes on weekdays and wakes this session only when a PR that is not yours, not a draft and not from a pipeline has commits it has not reviewed; a script then runs a deep review-panel review (9 Codex heads) and a headless Claude judge (Opus 5.5, medium effort, 500k context cap) that posts the comments on the PR. Run it again in a new session to resume with the saved config. Use when the user runs /review-panel:configure-prs or wants teammates' PRs reviewed automatically.
 argument-hint: "[<Azure DevOps project or repo URL> ...]"
 effort: high
 ---
@@ -34,7 +34,8 @@ identity is wrong, rerun setup with `--me <email>` (repeatable). PRs from
 pipeline and service identities (Build Service) are always skipped;
 `--skip <author>` skips another author (email, id or display name).
 `--hours 8-18` and `--interval 1800` are the defaults (weekdays only). The
-config is per machine, in `~/.claude/review-watch/config.json`.
+review settings (section 5) have their own setup flags. The config is per
+machine, in `~/.claude/review-watch/config.json`.
 
 ## 2. Preconditions
 
@@ -59,48 +60,42 @@ The background task notification wakes this session. Read its output.
 - Exit 2: az lost its login. Tell the user to run `az login`; do not restart.
 - Exit 4 (`ALREADY WATCHING`): another session on this machine is polling.
   Tell the user to stop that one first, or keep it; do not restart here.
-- `CANDIDATES <json>`: review each candidate in order (section 5), then start
-  the poller again (section 3). Report one line per PR: its link, the verdict and
-  the number of comments posted.
+- `CANDIDATES <json>`: run `python3 W review <key> [<key> ...]` (every
+  candidate's key, in order) with Bash `run_in_background: true` and end the
+  turn. Do not review the PRs in this session.
 
-The user may be away. Ask no questions during a wake: a point that needs the
-author's decision goes into the summary as a question for the author.
+When `review` exits, report one line per PR from its JSON lines: the link, the
+status (`reviewed`, `too-big`, `skipped`, `failed` with its reason), the verdict
+from `judge.lastLine` and the judge cost. Then start the poller again (section 3).
 
-## 5. Review one pull request
+The user may be away. Ask no questions during a wake.
 
-1. `python3 W checkout <key> [--previous <previousHead>]`. It prints the
-   worktree, `rangeBase`, `head` and `tooBig`. With `delta: true` this is a
-   re-review: only the commits after the last reviewed head.
-2. When `tooBig` is true, post a summary only (step 6) that says the PR is too
-   large for an automated review and names its size. No finder run.
-3. `python3 W threads <key>`: the existing comment threads. Keep them for the
-   judge only (review-panel step 6); never give them to the finder.
-4. In the worktree: `P/prepare-scope.sh <rangeBase> <head> --pr <prId>`. Fill
-   `facts.md` from what the worktree shows (pins, versions, config). Mark what
-   needs a network lookup as unverified rather than fetching it.
-5. `P/run-adversarial.sh <scope-dir>` (default mode; never deep in watch mode).
-6. Judge as in review-panel steps 6 and 7: presume each finding false, verify it
-   against the worktree, cross off what an existing thread already raised or
-   answered, and give each survivor a polarity: `Blocking`, `Should fix`, `Nit`
-   or `FYI`. Only findings verified in this session go above FYI.
-7. Write the docket JSON in the scope dir and post it:
+## 5. What `review` does per pull request
 
-   ```json
-   {"head": "<head>", "summary": "<verdict line, then 1-3 lines on what the change does and the main risk>",
-    "items": [{"polarity": "Should fix", "file": "src/x.cs", "line": 42, "endLine": 44,
-               "body": "<what is wrong, why it matters, the fix>"}]}
-   ```
+This session spends no tokens on it; everything runs in the script and in one
+headless Claude Code run per PR. Desktop does not let a session start another
+session from a turn that a background task woke, so the judge is a headless
+`claude -p` run, not a sidebar session; its transcript is in the log.
 
-   `python3 W post <key> <docket.json>`. Blocking and Should-fix items become
-   inline threads (at most 10; the rest go into the summary); Nit and FYI go
-   into the summary. The summary carries the marker that stops a second review
-   of the same head. File paths are repo-relative and lines are at the PR head;
-   `post` refuses a file or line that does not exist there. A PR that moved on
-   during the review is refused and comes back on the next poll.
-8. `python3 W cleanup <key>`.
-On any failure in steps 1-7: `python3 W fail <key> <head> "<reason>"`, report it
-in one line and go on with the next PR. After two failures of one head the
-poller skips that head until new commits arrive.
+1. Checkout: a detached worktree at the PR head. A re-review covers only the
+   commits after the last reviewed head. Above 60 files or 3000 changed lines it
+   posts a short "too large for an automated review" summary and stops.
+2. Finders, no model: `prepare-scope.sh`, then `run-heads.sh` with the
+   configured heads (default 9: delivery, dependency, identity, parity, situate,
+   reach, falsify, conform, invariants), one Codex run each, review-panel deep mode.
+3. Judge: `claude -p` with `--model claude-opus-5-5 --effort medium
+   --autocompact 500k` (setup `--model`, `--effort`, `--context-cap`; optional
+   `--max-budget-usd` caps the spend per PR). Its prompt is `judge-prompt.md`
+   beside this file: review-panel steps 5 to 7, the existing threads for the
+   cross-off only, then `watch.py post`. It works in the scope folder and may
+   write only there; it can read the checkout and run only `git -C <worktree>`
+   reads, `watch.py threads` and `watch.py post`.
+4. `post` puts Blocking and Should-fix items inline (at most 10) and the rest in
+   one summary that marks the reviewed head, so the head is not reviewed again.
+5. The worktree is removed. The scope, head outputs, docket and judge log stay
+   in `~/.claude/review-watch/scopes/`.
+A failure records the head; after two failures the poller skips that head
+until new commits arrive.
 
 ## Rules
 
@@ -112,7 +107,4 @@ poller skips that head until new commits arrive.
 - Do not run the PR's code (no build, tests or scripts from the PR). The
   pipeline checks the build; the review reads.
 - Comments post as the user's Azure DevOps identity and say they are automated.
-- Each review adds context to this session; it compacts as usual. To start
-  clean, close the session and run the skill again: the markers on the PRs
-  prevent repeat reviews.
 - Stop watching: stop the background task (TaskStop) or close the session.

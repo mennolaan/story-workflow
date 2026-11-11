@@ -75,11 +75,24 @@ in, so nobody has to ask for a review. Open a session in any repo and run it:
   model: the session waits at zero tokens and wakes only when an active PR that
   is not yours, not a draft and not from a pipeline identity (Build Service) has
   commits it has not reviewed.
-- The session then runs the default review-panel review (Codex finds, the
-  session judges) and posts on the PR: one inline comment per Blocking or
-  Should-fix finding (at most 10) and one summary. The summary carries a marker
-  with the reviewed commit, so a PR is reviewed again only after new commits,
+- The session then starts one review run per PR and spends no tokens on it
+  itself. The run checks out the PR and runs review-panel deep mode with 9
+  Codex heads (delivery, dependency, identity, parity, situate, reach, falsify,
+  conform, invariants). It then starts a headless Claude Code judge:
+  `claude -p --model claude-opus-5-5 --effort medium --autocompact 500k`. The
+  judge verifies the findings and posts on the PR: one inline comment per
+  Blocking or Should-fix finding (at most 10) and one summary. The summary
+  marks the reviewed commit, so a PR is reviewed again only after new commits,
   and then only the new changes.
+- Desktop does not let a session start another session from a turn that a
+  background task woke, so the judge is a headless run, not a sidebar session.
+  Its log, the head outputs and the docket stay in
+  `~/.claude/review-watch/scopes/`.
+- The judge works in the PR checkout. It may write only its docket and run only
+  read-only git commands, `watch.py threads` and `watch.py post`.
+- Change the judge or the heads on the first run: `--model`, `--effort`,
+  `--context-cap` (default 500k), `--max-budget-usd` (an optional spend cap per
+  PR) and `--heads a,b,c`.
 - It never votes, approves or completes a PR, never runs the PR's code and posts
   only comments. They post under your Azure DevOps identity and say they are
   automated.
@@ -89,8 +102,8 @@ in, so nobody has to ask for a review. Open a session in any repo and run it:
 - Needs `az` with the `azure-devops` extension, logged in (`az login`), plus
   the review-panel requirements (Codex and its companion).
 
-Cost: nothing while waiting. Each review is one Codex run plus one judge turn
-in the session.
+Cost: nothing while waiting. Each review is 9 Codex runs on your OpenAI account,
+plus one Opus 5.5 judge run whose context is capped at 500k tokens.
 
 ## The review profile
 
