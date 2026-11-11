@@ -4,10 +4,24 @@
 # diff.patch, files.txt, a facts.md skeleton seeded with every pin found in
 # the added lines, and an empty heads/ directory for head outputs.
 # Usage: prepare-scope.sh <base-ref> <head-ref> [--pr <n>] [--out <dir>]
+#        prepare-scope.sh --pr <n> [--out <dir>]        (Azure Repos: base and head from the PR itself)
 #        prepare-scope.sh --uncommitted [--out <dir>]   (working tree vs HEAD, untracked included)
 #        prepare-scope.sh --plan <path> [--out <dir>]   (design review of one plan file, ignored files allowed)
+#        prepare-scope.sh --cleanup <scope-dir>         (remove the reviewed tree of a scope, after the docket)
 # Also writes scope.env (MODE, BASE_SHA, HEAD_SHA, REPO, PATCH_SHA256): the
 # runners derive their target from it and refuse a drifted checkout.
+# A head that is not checked out (a PR, another branch) gets a detached worktree
+# at HEAD_SHA under $TMPDIR, recorded as TREE in scope.env: the finders read it,
+# so the checkout may sit on any branch and carry unrelated edits.
+# `--pr <n>` without refs reads the PR with `az repos pr show`: head is
+# lastMergeSourceCommit; base is lastMergeTargetCommit for a completed PR, else
+# the merge base of origin/<target> and the head. PR_STATUS, PR_DRAFT and
+# PR_TARGET go into scope.env and scope.md; a completed or abandoned PR warns
+# that the review is post-merge.
+# Every az call passes --org (and --project where az takes it) from the profile
+# and is bounded to REVIEW_PANEL_AZ_TIMEOUT seconds (default 20). A best-effort
+# call that times out or fails prints one WARN line with the cause and the
+# stderr tail, and the scope continues.
 # Default out dir: .claude/.review/<head-short> (keep it gitignored). Prints the dir.
 # The review profile of the repo (scripts/profile.sh) names the PR host for the
 # sibling pull requests and the paths that count as the review harness.
@@ -21,17 +35,108 @@ cd "${repo}"
 # shellcheck disable=SC1091
 . "${here}/profile.sh"
 load_profile "${repo}" || exit 1
-base="" head="" pr="" out="" uncommitted=0 plan=""
+base="" head="" pr="" out="" uncommitted=0 plan="" cleanup=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --pr) pr="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --uncommitted) uncommitted=1; shift ;;
     --plan) plan="$2"; shift 2 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    --cleanup) cleanup="$2"; shift 2 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) if [ -z "${base}" ]; then base="$1"; elif [ -z "${head}" ]; then head="$1"; else echo "unexpected argument: $1" >&2; exit 2; fi; shift ;;
   esac
 done
+
+if [ -n "${cleanup}" ]; then
+  [ -f "${cleanup}/scope.env" ] || { echo "FAIL: ${cleanup}/scope.env not found; --cleanup takes a scope dir" >&2; exit 1; }
+  TREE=""
+  # shellcheck disable=SC1091
+  . "${cleanup}/scope.env"
+  if [ -n "${TREE}" ] && [ -d "${TREE}" ]; then
+    # Only this scope's own worktree: never a global `git worktree prune`, whose
+    # entries can belong to other sessions.
+    git worktree remove --force "${TREE}" && echo "removed the reviewed tree ${TREE}" >&2
+  else
+    echo "no reviewed tree to remove for ${cleanup}" >&2
+  fi
+  exit 0
+fi
+
+AZ_TIMEOUT="${REVIEW_PANEL_AZ_TIMEOUT:-20}"
+case "${AZ_TIMEOUT}" in *[!0-9]*|""|0) echo "FAIL: REVIEW_PANEL_AZ_TIMEOUT=${AZ_TIMEOUT} is not a positive whole number of seconds" >&2; exit 2 ;; esac
+# No EXIT trap for its cleanup: under bash 3.2 an EXIT trap turns an unbound-variable exit into
+# status 0, and a caller would take a failed scope for a good one. A failed run leaves this small
+# folder in $TMPDIR.
+az_tmp="$(mktemp -d "${TMPDIR:-/tmp}/review-panel-az.XXXXXX")"
+# az_call <name> <az args...>: one az call with --org from the profile (and --project for
+# `repos pr list`, the only call here that takes it; `repos pr show` accepts --org only), bounded
+# to AZ_TIMEOUT seconds. Output in ${az_tmp}/<name>.out and .err. Returns the az exit code, 124
+# on a timeout.
+az_call() {
+  local name="$1" ado=() rc=0
+  shift
+  [ -n "${ADO_ORG}" ] && ado+=(--org "${ADO_ORG}")
+  [ "$1 $2 $3" = "repos pr list" ] && [ -n "${ADO_PROJECT}" ] && ado+=(--project "${ADO_PROJECT}")
+  bounded "${AZ_TIMEOUT}" "${az_tmp}/${name}.out" "${az_tmp}/${name}.err" az "$@" ${ado[@]+"${ado[@]}"} || rc=$?
+  return "${rc}"
+}
+# az_why <name> <rc>: the cause of a failed az_call, on one line.
+az_why() {
+  local tail
+  tail="$(tail -3 "${az_tmp}/$1.err" 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+  if [ "$2" = 124 ]; then printf 'timed out after %s s' "${AZ_TIMEOUT}"; else printf 'exit %s' "$2"; fi
+  [ -n "${tail}" ] && printf ': %s' "${tail}"
+  [ -n "${ADO_ORG}" ] || printf ' (no adoOrg in the review profile and none in the origin URL, so az used its own default org)'
+  return 0
+}
+
+pr_status="" pr_draft="" pr_target=""
+if [ -n "${pr}" ] && [ -z "${base}" ] && [ -z "${head}" ] && [ -z "${plan}" ] && [ "${uncommitted}" = 0 ]; then
+  [ "${PR_HOST}" = azure-repos ] \
+    || { echo "FAIL: --pr ${pr} without refs reads the pull request from Azure Repos only (pr host: ${PR_HOST}); pass <base-ref> <head-ref> as well" >&2; exit 2; }
+  rc=0
+  az_call pr repos pr show --id "${pr}" -o json || rc=$?
+  [ "${rc}" = 0 ] || { echo "FAIL: could not read pull request ${pr}: az repos pr show $(az_why pr "${rc}")" >&2; exit 1; }
+  pr_fields="$(python3 - "${az_tmp}/pr.out" <<'PRJSON'
+import json, shlex, sys
+d = json.load(open(sys.argv[1]))
+def sha(k):
+    return (d.get(k) or {}).get("commitId") or ""
+f = {"pr_status": d.get("status") or "", "pr_draft": str(bool(d.get("isDraft"))).lower(),
+     "pr_target": (d.get("targetRefName") or "").replace("refs/heads/", "", 1),
+     "pr_source_ref": d.get("sourceRefName") or "", "pr_target_ref": d.get("targetRefName") or "",
+     "pr_head": sha("lastMergeSourceCommit"), "pr_target_sha": sha("lastMergeTargetCommit")}
+for k, v in f.items():
+    print(f"{k}={shlex.quote(v)}")
+PRJSON
+)" || { echo "FAIL: az repos pr show ${pr} returned no readable pull request" >&2; exit 1; }
+  pr_source_ref="" pr_target_ref="" pr_head="" pr_target_sha=""
+  eval "${pr_fields}"
+  [ -n "${pr_head}" ] || { echo "FAIL: pull request ${pr} has no lastMergeSourceCommit" >&2; exit 1; }
+  # A completed PR's source branch may be gone: fetch by commit first, then by ref. Best effort.
+  for c in "${pr_head}" "${pr_target_sha}"; do
+    [ -z "${c}" ] || git cat-file -e "${c}^{commit}" 2>/dev/null \
+      || GIT_TERMINAL_PROMPT=0 bounded 120 /dev/null "${az_tmp}/fetch.err" git fetch --quiet origin "${c}" \
+      || GIT_TERMINAL_PROMPT=0 bounded 120 /dev/null "${az_tmp}/fetch.err" git fetch --quiet origin "${pr_source_ref}" "${pr_target_ref}" \
+      || true
+  done
+  git cat-file -e "${pr_head}^{commit}" 2>/dev/null \
+    || { echo "FAIL: the head ${pr_head:0:12} of pull request ${pr} is not in this clone and could not be fetched; run git fetch origin ${pr_source_ref}" >&2; exit 1; }
+  head="${pr_head}"
+  if [ "${pr_status}" = completed ] || ! git rev-parse --verify --quiet "origin/${pr_target}^{commit}" >/dev/null; then
+    # After the merge, origin/<target> contains the head, so a merge base there is the head itself.
+    [ -n "${pr_target_sha}" ] && git cat-file -e "${pr_target_sha}^{commit}" 2>/dev/null \
+      || { echo "FAIL: the target commit ${pr_target_sha:0:12} of pull request ${pr} is not in this clone; run git fetch origin" >&2; exit 1; }
+    base="${pr_target_sha}"
+  else
+    base="$(git merge-base "origin/${pr_target}" "${head}")"
+  fi
+  echo "pull request ${pr}: status ${pr_status}, draft ${pr_draft}, target ${pr_target}, head ${head:0:12}, base ${base:0:12}" >&2
+  case "${pr_status}" in
+    completed|abandoned) echo "WARN: post-merge review; findings become follow-ups, not fixes (pull request ${pr} is ${pr_status})" >&2 ;;
+  esac
+fi
 
 mode="branch"
 if [ -n "${plan}" ]; then
@@ -71,10 +176,28 @@ else
 fi
 [ -s "${out}/diff.patch" ] || { echo "FAIL: empty diff for the requested scope (uncommitted work needs 'git add -N' for new files, or pass --uncommitted; a plan file needs --plan)" >&2; exit 1; }
 patch_sha="$(shasum -a 256 "${out}/diff.patch" | cut -d' ' -f1)"
+# A re-prepared scope first drops the reviewed tree of its previous run.
+if [ -f "${out}/scope.env" ]; then
+  # shellcheck disable=SC1091
+  old_tree="$(TREE=""; . "${out}/scope.env" 2>/dev/null; echo "${TREE}")"
+  if [ -n "${old_tree}" ] && [ -d "${old_tree}" ]; then git worktree remove --force "${old_tree}" 2>/dev/null || true; fi
+fi
+tree_dir=""
+if [ "${mode}" = branch ] && [ "${head_sha}" != "$(git rev-parse HEAD)" ]; then
+  tmp_root="${TMPDIR:-/tmp}"
+  tree_dir="$(mktemp -d "${tmp_root%/}/review-panel-tree.XXXXXX")"
+  tree_dir="$(cd "${tree_dir}" && pwd -P)"
+  git worktree add --quiet --detach "${tree_dir}" "${head_sha}" >&2 \
+    || { rm -rf "${tree_dir}"; echo "FAIL: could not add a worktree at ${head_sha:0:12} in ${tree_dir}; see the git error above" >&2; exit 1; }
+  echo "reviewed tree: ${tree_dir} (detached at ${head_sha:0:12}; the checkout stays at $(git rev-parse --short HEAD)); remove it after the docket: prepare-scope.sh --cleanup ${out_abs}" >&2
+fi
 {
   # scope.env is sourced as shell: quote values that can carry spaces (this repo path does).
   echo "MODE=${mode}"; echo "REPO=\"${repo}\""; echo "BASE_SHA=${base_sha}"; echo "HEAD_SHA=${head_sha}"
   echo "MERGE_BASE=${merge_base}"; echo "PATCH_SHA256=${patch_sha}"; [ -n "${plan}" ] && echo "PLAN=\"${plan}\""; [ -n "${pr}" ] && echo "PR=${pr}"
+  [ -n "${pr_status}" ] && { echo "PR_STATUS=${pr_status}"; echo "PR_DRAFT=${pr_draft}"; echo "PR_TARGET=\"${pr_target}\""; }
+  [ -n "${tree_dir}" ] && echo "TREE=\"${tree_dir}\""
+  true
 } > "${out}/scope.env"
 
 tree="$(git rev-parse "${head_sha}^{tree}")"
@@ -86,7 +209,9 @@ tree="$(git rev-parse "${head_sha}^{tree}")"
   echo "- base: ${base:-HEAD} (${base_sha})"
   echo "- head: ${head:-working tree} (${head_sha}); tree ${tree}"
   echo "- merge-base: ${merge_base}"
-  [ -n "${pr}" ] && echo "- pull request: #${pr}"
+  [ -n "${pr}" ] && echo "- pull request: #${pr}${pr_status:+, status ${pr_status}, draft ${pr_draft}, target ${pr_target}}"
+  case "${pr_status}" in completed|abandoned) echo "- post-merge review: findings become follow-ups, not fixes" ;; esac
+  [ -n "${tree_dir}" ] && echo "- reviewed tree: ${tree_dir} (a detached worktree at the head; the checkout is on another commit)"
   [ -n "${plan}" ] && echo "- plan file: ${plan}"
   echo "- prepared: $(date -u +%Y-%m-%dT%H:%MZ)"
   echo "- stat: ${stat}"
@@ -147,8 +272,13 @@ PY
   # preparable.
   case "${PR_HOST}" in
     azure-repos)
-      siblings="$(az repos pr list --status active --query '[].[pullRequestId, sourceRefName, title]' -o tsv 2>/dev/null \
-          | awk -F'\t' 'NF{sub(/^refs\/heads\//, "", $2); printf "- !%s `%s`: %s\n", $1, $2, $3}' || true)"
+      siblings="" rc=0
+      az_call siblings repos pr list --status active --query '[].[pullRequestId, sourceRefName, title]' -o tsv || rc=$?
+      if [ "${rc}" = 0 ]; then
+        siblings="$(awk -F'\t' 'NF{sub(/^refs\/heads\//, "", $2); printf "- !%s `%s`: %s\n", $1, $2, $3}' "${az_tmp}/siblings.out")"
+      else
+        echo "WARN: the sibling pull request lookup failed, az repos pr list $(az_why siblings "${rc}"); the scope continues without it" >&2
+      fi
       reader="az repos" ;;
     github)
       # shellcheck disable=SC2016 # the jq program is single-quoted on purpose
@@ -202,5 +332,6 @@ if [ -n "${hits}" ]; then
   echo "WARN: the candidate changes the review harness itself ($(wc -l <<< "${hits}" | tr -d ' ') files: $(tr '\n' ' ' <<< "${hits}")): read those hunks first; the profile and the repo rules the finders read come from this checkout" >&2
   echo "HARNESS_CHANGED=1" >> "${out}/scope.env"
 fi
+rm -rf "${az_tmp}"
 echo "${out_abs}"
 echo "scope: $(wc -l < "${out}/files.txt" | tr -d ' ') files, $(wc -l < "${out}/diff.patch" | tr -d ' ') diff lines, tree ${tree:0:12}; fill facts.md before run-heads.sh" >&2

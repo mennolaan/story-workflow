@@ -29,12 +29,20 @@ Replace these steps:
 
 1. **Preconditions.** `scripts/grok.sh preflight`: the CLI is on PATH, its
    version is in `scripts/lib.sh` (`SUPPORTED_GROK_VERSIONS`), it is logged in,
+   `https://cli-chat-proxy.grok.com` answers (`FAIL: no connection to
+   cli-chat-proxy.grok.com:443 (sandbox or proxy)` names a blocked network),
    and one probe turn reports exactly the tools `read_file`, `grep` and
-   `list_dir`. Absent: report exactly what is missing and stop. The other
-   preconditions of review-panel step 1 apply as written.
+   `list_dir`. A probe error `unknown model id` also shows when the proxy
+   cannot be reached; the preflight says so. Absent: report exactly what is
+   missing and stop. The other preconditions of review-panel step 1 apply as
+   written.
 4. **Find (Grok, background).**
-   `scripts/run-grok.sh <scope-dir> [--deep] [--heads a,b,c] [--focus text]
-   [--max-parallel n] [--timeout minutes]`.
+   `scripts/run-grok.sh <scope-dir> --default|--deep [--heads a,b,c] [--focus text]
+   [--max-parallel n] [--timeout minutes]`. The depth flag is the user's
+   answer to review-panel step 3; without it the runner exits 2 (a plan scope
+   needs none). A run below 8 turns prints `WARN: thin sample (N turns,
+   below 8); consider a second run or --deep`: copy that line into the
+   docket.
    - Default mode: one adversarial review. The prompt is `prompts/no-shell.md`,
      `prompts/adversarial.md` and review-panel `heads/_focus.md` with the
      profile context. The result is bound to `schemas/findings.schema.json`
@@ -62,11 +70,18 @@ finders is still not evidence.
   the run when the reviewed tree changed.
 - **Isolated.** Every Grok process starts with HOME and GROK_HOME in a fresh
   private temp dir that holds only a symlink to `~/.grok/auth.json`. It loads
-  no user config, plugin, MCP server, hook, skill or memory.
+  no user config, plugin, MCP server, hook, skill or memory. That GROK_HOME
+  gets a `config.toml` and the env with telemetry, Mixpanel, trace upload,
+  feedback and the update check off (`GROK_TELEMETRY_ENABLED=0` and the
+  related switches; `scripts/grok.sh` names each one and its source).
 - **Reviewed tree.** Grok has no shell, so it cannot run the `git show` that
   the review-panel prompts ask for. `prompts/no-shell.md` tells it to read the
   same paths in its working directory, which is a detached worktree at the
   scope head (branch and plan reviews) or the repo (uncommitted reviews).
+  When the scope already has a reviewed tree (`TREE` in `scope.env`, for a
+  head that is not checked out), Grok reads that one and the runner adds no
+  second worktree. The runner removes only the worktree it added itself; it
+  never runs a global `git worktree prune`.
   Gitignored files such as a plan under `.plans/` are read by full path in the
   shared checkout. For `git log`, the runner writes the last 20 commits on the
   base ref of the profile that touch the scoped files to
@@ -89,13 +104,21 @@ SuperGrok or X Premium+ account. The installed version must match
 interactively. After an update, re-verify the flags and events that `lib.sh`
 names and bump the pin.
 
+A sandboxed session (for example the Claude Code sandbox) must allow the host
+`cli-chat-proxy.grok.com` for a Grok run. The telemetry hosts (`grok.com`,
+`api.mixpanel.com`) need no allowance: the runner turns telemetry off.
+
 ## Held-out checks of this harness
 
 `${CLAUDE_PLUGIN_ROOT}/tests/review-panel-matrix.sh` runs the Grok guards with
-a fake `grok`: an unpinned version, a probe stream that offers
+a fake `grok` and `curl`: an unpinned version, a denied proxy host, an
+`unknown model id` probe error, a probe stream that offers
 `run_terminal_cmd`, a stream that calls a tool outside the allowlist, a stream
-that ends without final text, and a result that does not match the schema
-(missing key, extra key, wrong type, unknown stance, broken JSON). A timeout,
+that ends without final text, a result that does not match the schema
+(missing key, extra key, wrong type, unknown stance, broken JSON), a run
+without a depth flag, a 3-turn run (thin-sample WARN), the telemetry switches
+in the isolated GROK_HOME, a scope with its own reviewed tree, and a stale
+worktree entry of another session that the runner must leave alone. A timeout,
 `--max-turns`, a sandbox profile that cannot apply and a file written into the
 reviewed tree need a live run. The value check is a canary branch with seeded
 defects (a token in a parameter file, a prompt change without a version bump,

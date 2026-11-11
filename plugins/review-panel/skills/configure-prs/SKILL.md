@@ -80,7 +80,7 @@ session from a turn that a background task woke, so the judge is a headless
 1. Checkout: a detached worktree at the PR head. A re-review covers only the
    commits after the last reviewed head. Above 60 files or 3000 changed lines it
    posts a short "too large for an automated review" summary and stops.
-2. Finders, no model: `prepare-scope.sh`, then `run-heads.sh` with the
+2. Finders, no model: `prepare-scope.sh`, then `run-heads.sh --deep` with the
    configured heads (default 9: delivery, dependency, identity, parity, situate,
    reach, falsify, conform, invariants), one Codex run each, review-panel deep mode.
 3. Judge: `claude -p` with `--model claude-opus-5-5 --effort medium

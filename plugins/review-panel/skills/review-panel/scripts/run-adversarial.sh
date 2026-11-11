@@ -5,7 +5,11 @@
 # from heads/_focus.md and the repo's review profile against a prepared scope
 # directory. Writes <scope>/adversarial.focus.md (the rendered focus),
 # adversarial.json (structured findings) and adversarial.log.
-# Usage: run-adversarial.sh <scope-dir> [--model <m>]
+# Usage: run-adversarial.sh <scope-dir> --default [--model <m>]
+# --default is the depth the user chose (step 3 of SKILL.md); without it the
+# runner exits 2. Deep mode is run-heads.sh --deep. The engine runs in the
+# reviewed tree: TREE of scope.env when prepare-scope.sh added one, else the repo.
+# The companion reports no turn count, so this runner has no thin-sample check.
 # The review target comes from <scope>/scope.env: branch mode reviews
 # BASE_SHA..HEAD, uncommitted mode the working tree; plan mode is not a git
 # target, use run-heads.sh. Before Codex starts, the manifest is verified
@@ -19,15 +23,18 @@ set -euo pipefail
 
 skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo="$(git rev-parse --show-toplevel)"
-scope="" model=""
+scope="" model="" depth=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --default) depth=default; shift ;;
+    --deep) echo "FAIL: deep mode runs the stance heads: run run-heads.sh <scope> --deep; run-adversarial.sh runs the default review (--default)" >&2; exit 2 ;;
     --model) model="$2"; shift 2 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) if [ -z "${scope}" ]; then scope="$1"; else echo "unexpected argument: $1" >&2; exit 2; fi; shift ;;
   esac
 done
-[ -n "${scope}" ] && [ -d "${scope}" ] || { echo "usage: run-adversarial.sh <scope-dir> (run prepare-scope.sh first)" >&2; exit 2; }
+[ -n "${scope}" ] && [ -d "${scope}" ] || { echo "usage: run-adversarial.sh <scope-dir> --default (run prepare-scope.sh first)" >&2; exit 2; }
+[ -n "${depth}" ] || { echo "FAIL: choose the depth (--default or --deep); the skill asks the user first" >&2; exit 2; }
 scope="$(cd "${scope}" && pwd)"
 # shellcheck disable=SC1091
 . "${skill_dir}/scripts/pins.sh"
@@ -62,8 +69,9 @@ args=(adversarial-review --wait --json --scope "${kind}")
 [ -n "${base}" ] && args+=(--base "${base}")
 [ -n "${model}" ] && args+=(--model "${model}")
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "codex adversarial review: companion ${companion_version} (codex-cli ${codex_version}), mode ${MODE}, base ${base:0:12}, head ${HEAD_SHA:0:12}, started ${started}; output ${scope}/adversarial.json" >&2
-if (cd "${repo}" && node "${companion}" "${args[@]}" "${focus}" > "${scope}/adversarial.json" 2> "${scope}/adversarial.log"); then
+echo "codex adversarial review: companion ${companion_version} (codex-cli ${codex_version}), mode ${MODE}, base ${base:0:12}, head ${HEAD_SHA:0:12}, reviewed tree ${REVIEWED}, started ${started}; output ${scope}/adversarial.json" >&2
+write_finder_env "${scope}" codex-companion "companion ${companion_version}, codex-cli ${codex_version}" default ""
+if (cd "${REVIEWED}" && node "${companion}" "${args[@]}" "${focus}" > "${scope}/adversarial.json" 2> "${scope}/adversarial.log"); then
   python3 - "${scope}/adversarial.json" "${kind}" "${base}" <<'PY' || { echo "FAIL: adversarial.json rejected (see above and adversarial.log)" >&2; exit 1; }
 import json, sys
 d = json.load(open(sys.argv[1])); want_mode, want_base = sys.argv[2], sys.argv[3]

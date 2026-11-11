@@ -623,7 +623,7 @@ def run_panel(info, k, cfg, scope):
     with (scope / "facts.md").open("a") as facts:
         facts.write("\n- Automated watch run (configure-prs): no upstream lookup was made. "
                     "Report a load-bearing upstream claim as a fact-sheet gap.\n")
-    code = run_bounded([str(p / "run-heads.sh"), str(scope), "--heads", ",".join(cfg["heads"])], tree,
+    code = run_bounded([str(p / "run-heads.sh"), str(scope), "--deep", "--heads", ",".join(cfg["heads"])], tree,
                        str(scope) + ".heads.log", cfg["headsTimeoutMinutes"] * 60)
     status = scope / "heads" / "status.tsv"
     rows = [line.split("\t") for line in status.read_text().splitlines()[1:]] if status.exists() else []

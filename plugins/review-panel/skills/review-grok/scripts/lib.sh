@@ -38,22 +38,31 @@ timeout_prefix() {
 # reviewed_tree <repo>: the directory Grok runs in, on stdout. Call after check_scope_integrity.
 # Branch and plan modes: a detached worktree at HEAD_SHA in a private temp dir, so Grok, which has
 # no shell and cannot run `git show`, reads the committed tree and never an uncommitted edit that
-# another stream left in this shared checkout. Uncommitted mode: the repo itself.
+# another stream left in this shared checkout. When the scope already has one (TREE in scope.env,
+# added by prepare-scope.sh for a head that is not checked out), Grok reads that tree and no
+# second worktree is added. Uncommitted mode: the repo itself.
 reviewed_tree() {
   local repo="$1" tree tmp="${TMPDIR:-/tmp}"
   if [ "${MODE}" = uncommitted ]; then echo "${repo}"; return 0; fi
+  if [ -n "${TREE:-}" ]; then echo "${TREE}"; return 0; fi
   tree="$(mktemp -d "${tmp%/}/review-grok-tree.XXXXXX")"
   git -C "${repo}" worktree add --quiet --detach "${tree}" "${HEAD_SHA}" >&2 \
     || { rm -rf "${tree}"; echo "FAIL: could not add a worktree at ${HEAD_SHA:0:12} in ${tree}; see the git error above" >&2; return 1; }
   echo "${tree}"
 }
 
-# remove_reviewed_tree <repo> <tree>: drops the worktree that reviewed_tree added; a no-op for the repo itself.
+# remove_reviewed_tree <repo> <tree>: drops the worktree that reviewed_tree added; a no-op for the
+# repo itself and for the scope's own TREE (prepare-scope.sh --cleanup removes that one). Only this
+# worktree: a global `git worktree prune` would also touch the entries of other sessions, and it
+# fails loud on an entry it may not delete.
 remove_reviewed_tree() {
   local repo="$1" tree="$2"
-  if [ -z "${tree}" ] || [ "${tree}" = "${repo}" ]; then return 0; fi
-  git -C "${repo}" worktree remove --force "${tree}" 2>/dev/null || rm -rf "${tree}"
-  git -C "${repo}" worktree prune
+  if [ -z "${tree}" ] || [ "${tree}" = "${repo}" ] || [ "${tree}" = "${TREE:-}" ]; then return 0; fi
+  git -C "${repo}" worktree remove --force "${tree}" 2>/dev/null || {
+    rm -rf "${tree}"
+    echo "WARN: git worktree remove failed for ${tree}; removed the folder, its entry under .git/worktrees stays until a git worktree prune" >&2
+  }
+  return 0
 }
 
 # check_tree_untouched <repo> <scope-dir> <tree>: after Grok returns, prove it changed nothing.

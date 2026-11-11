@@ -5,13 +5,16 @@
 #   profile.sh show [<repo>]
 #
 # Location: ${REVIEW_PANEL_PROFILE:-<repo>/.claude/review-profile}. Every file is optional:
-#   profile.json   name, baseRef, prHost (auto|azure-repos|github|none), harnessPaths
-#                  (added to the defaults), deepHeads, planHeads. An unknown key fails loud.
+#   profile.json   name, baseRef, prHost (auto|azure-repos|github|none), adoOrg, adoProject,
+#                  harnessPaths (added to the defaults), deepHeads, planHeads. An unknown key
+#                  fails loud. adoOrg and adoProject default to the org and project of an Azure
+#                  Repos origin URL; every az call passes them as --org and --project.
 #   context.md     project rules for every finder prompt, in place of __CONTEXT__.
 #   judge.md       instructions for the judge (the main thread): checks, severity, PR threads.
 #   heads/<h>.md   appended to the generic head <h>, or a head of its own when the plugin has none.
 # load_profile <repo> sets PROFILE_DIR (empty when the folder is absent), PROFILE_NAME,
-# BASE_REF, PR_HOST, HARNESS_PATHS (newline list), DEEP_HEADS and PLAN_HEADS.
+# BASE_REF, PR_HOST, ADO_ORG (an org URL), ADO_PROJECT, HARNESS_PATHS (newline list), DEEP_HEADS
+# and PLAN_HEADS.
 
 PANEL_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PANEL_SKILL="$(cd "${PANEL_SCRIPTS}/.." && pwd)"
@@ -22,9 +25,10 @@ load_profile() {
   PROFILE_DIR=""
   [ -d "${dir}" ] && PROFILE_DIR="$(cd "${dir}" && pwd)"
   out="$(python3 - "${repo}" "${PROFILE_DIR}" <<'PY'
-import json, os, shlex, subprocess, sys
+import json, os, re, shlex, subprocess, sys, urllib.parse
 repo, pdir = sys.argv[1], sys.argv[2]
-keys = {"name": str, "baseRef": str, "prHost": str, "harnessPaths": list, "deepHeads": list, "planHeads": list}
+keys = {"name": str, "baseRef": str, "prHost": str, "adoOrg": str, "adoProject": str,
+        "harnessPaths": list, "deepHeads": list, "planHeads": list}
 d = {}
 path = os.path.join(pdir, "profile.json") if pdir else ""
 if path and os.path.isfile(path):
@@ -53,9 +57,26 @@ if not base:
 host = d.get("prHost", "auto")
 if host not in ("auto", "azure-repos", "github", "none"):
     print(f"FAIL: {path}: prHost '{host}' is not auto, azure-repos, github or none", file=sys.stderr); sys.exit(1)
+url = git("remote", "get-url", "origin")
 if host == "auto":
-    url = git("remote", "get-url", "origin")
     host = "github" if "github.com" in url else "azure-repos" if ("dev.azure.com" in url or "visualstudio.com" in url) else "none"
+# Azure Repos origin URLs: https://[user@]dev.azure.com/<org>/<project>/_git/<repo>,
+# https://<org>.visualstudio.com/[DefaultCollection/]<project>/_git/<repo> and
+# git@ssh.dev.azure.com:v3/<org>/<project>/<repo>. az without --org falls back to its own
+# default org, which can be another org entirely, and then fails or hangs on the keychain.
+org, project = "", ""
+m = (re.match(r"^https?://(?:[^@/]+@)?dev\.azure\.com/([^/]+)/([^/]+)/_git/", url)
+     or re.match(r"^(?:ssh://)?[^@]+@(?:ssh\.)?dev\.azure\.com(?::v3|:22/v3|/v3)?/([^/]+)/([^/]+)/", url))
+if m:
+    org, project = "https://dev.azure.com/" + m.group(1), m.group(2)
+else:
+    m = re.match(r"^https?://(?:[^@/]+@)?([^./]+)\.visualstudio\.com/(?:DefaultCollection/)?([^/]+)/_git/", url)
+    if m:
+        org, project = "https://dev.azure.com/" + m.group(1), m.group(2)
+org = d.get("adoOrg") or org
+if org and "://" not in org:
+    org = "https://dev.azure.com/" + org
+project = urllib.parse.unquote(d.get("adoProject") or project)
 harness = [".claude/review-profile/", ".claude/settings.json", "CLAUDE.md", "AGENTS.md"]
 if pdir:
     rel = os.path.relpath(os.path.realpath(pdir), os.path.realpath(repo))
@@ -65,6 +86,7 @@ harness += [p for p in d.get("harnessPaths", []) if p not in harness]
 deep = d.get("deepHeads") or ["delivery", "dependency", "identity", "parity", "situate", "reach", "falsify"]
 plan = d.get("planHeads") or ["delivery", "conform", "situate"]
 out = {"PROFILE_NAME": d.get("name") or os.path.basename(os.path.realpath(repo)), "BASE_REF": base, "PR_HOST": host,
+       "ADO_ORG": org.rstrip("/"), "ADO_PROJECT": project,
        "HARNESS_PATHS": "\n".join(dict.fromkeys(harness)), "DEEP_HEADS": ",".join(deep), "PLAN_HEADS": ",".join(plan)}
 for k, v in out.items():
     print(f"{k}={shlex.quote(v)}")
@@ -133,6 +155,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   echo "name: ${PROFILE_NAME}"
   echo "base ref: ${BASE_REF}"
   echo "pr host: ${PR_HOST}"
+  echo "azure devops: org ${ADO_ORG:-none}, project ${ADO_PROJECT:-none}"
   echo "deep heads: ${DEEP_HEADS}"
   echo "plan heads: ${PLAN_HEADS}"
   echo "harness paths: $(tr '\n' ' ' <<< "${HARNESS_PATHS}")"
