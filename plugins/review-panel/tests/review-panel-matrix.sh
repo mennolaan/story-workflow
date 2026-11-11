@@ -3,9 +3,11 @@
 # renderer, prepare-scope.sh, the scope integrity guards, run-heads.sh,
 # run-adversarial.sh, check-docket.sh, and the Grok adapter and runner.
 # Every case is falsifying: it fails when the branch it names is removed.
-# Fixtures are git repos in a temp folder. Fake codex, gh, az and grok binaries
-# and a fake companion stand in for the real tools, so no model runs and no
-# network call is made. Runs shellcheck on every script when it is installed.
+# Fixtures are git repos in a temp folder. Fake codex, gh, az, curl and grok
+# binaries and a fake companion stand in for the real tools, so no model runs
+# and no network call is made. Runs shellcheck on every script when it is
+# installed. Section 8 takes about 25 s: one case proves the 20 s bound on a
+# hung az call.
 # Usage: tests/review-panel-matrix.sh   (from the plugin root; exit 0 = all cases pass)
 # shellcheck disable=SC2015,SC2016 # pass and fail return 0; backticks in single quotes are literal Markdown.
 set -uo pipefail
@@ -43,13 +45,33 @@ cat >"${fake}/gh" <<'EOF'
 [ "$1 $2" = "pr list" ] && { echo '- #7 `feature/x`: sibling work'; exit 0; }
 exit 1
 EOF
+# az: FAKE_AZ_ARGV records every call, FAKE_AZ_SLEEP hangs it (as az does on a keychain prompt),
+# FAKE_AZ_PR_JSON answers `repos pr show`, FAKE_AZ_LIST=1 answers `repos pr list`. Anything else
+# fails the way az does without --org in the evidence: a keychain error.
 cat >"${fake}/az" <<'EOF'
 #!/usr/bin/env bash
+[ -n "${FAKE_AZ_ARGV:-}" ] && printf '%s\n' "$*" >>"${FAKE_AZ_ARGV}"
+[ -n "${FAKE_AZ_SLEEP:-}" ] && sleep "${FAKE_AZ_SLEEP}"
+case "$1 $2 $3" in
+  "repos pr show") [ -n "${FAKE_AZ_PR_JSON:-}" ] && { cat "${FAKE_AZ_PR_JSON}"; exit 0; } ;;
+  "repos pr list") [ "${FAKE_AZ_LIST:-0}" = 1 ] && { printf '9\trefs/heads/feature/y\tsibling y\n'; exit 0; } ;;
+esac
+echo "ERROR: (100001, \"Can't fetch password from system\")" >&2
 exit 1
 EOF
+# curl: FAKE_CURL_FAIL=1 fails the way a sandbox that denies the host does.
+cat >"${fake}/curl" <<'EOF'
+#!/usr/bin/env bash
+[ "${FAKE_CURL_FAIL:-0}" = 1 ] && { echo "curl: (56) CONNECT tunnel failed, response 403" >&2; exit 56; }
+exit 0
+EOF
+# grok: FAKE_GROK_STDERR (with FAKE_GROK_EXIT) fails the turn; FAKE_GROK_ENV_OUT records the GROK_*
+# environment and the config.toml of the GROK_HOME the run got.
 cat >"${fake}/grok" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then echo "grok ${FAKE_GROK_VERSION:-1.0.46}"; exit 0; fi
+if [ -n "${FAKE_GROK_ENV_OUT:-}" ]; then env | grep '^GROK_' >"${FAKE_GROK_ENV_OUT}"; cat "${GROK_HOME}/config.toml" >"${FAKE_GROK_ENV_OUT}.toml" 2>/dev/null; fi
+[ -n "${FAKE_GROK_STDERR:-}" ] && { echo "${FAKE_GROK_STDERR}" >&2; exit "${FAKE_GROK_EXIT:-1}"; }
 cat "${FAKE_GROK_STREAM}"
 EOF
 chmod +x "${fake}"/*
@@ -146,7 +168,7 @@ prep "${r}" --plan "${tmp}/plan.md"
 [ "${code}" = 0 ] && grep -q '^MODE=plan$' "${scope}/scope.env" && pass "prepare-scope: a plan scope" || fail "prepare-scope plan" "$(cat "${tmp}/stderr")"
 
 # 3. Scope integrity (check_scope_integrity through run-heads.sh --dry-run).
-heads() { out="$(cd "$1" && FAKE_CODEX_VERSION="${FAKE_CODEX_VERSION:-0.167.0}" "${S}/run-heads.sh" "$2" "${@:3}" 2>"${tmp}/stderr")"; code=$?; }
+heads() { out="$(cd "$1" && FAKE_CODEX_VERSION="${FAKE_CODEX_VERSION:-0.167.0}" "${S}/run-heads.sh" "$2" --deep "${@:3}" 2>"${tmp}/stderr")"; code=$?; }
 prep "${r}" origin/main HEAD
 heads "${r}" "${scope}" --dry-run
 [ "${code}" = 0 ] && pass "integrity: a fresh branch scope passes" || fail "integrity fresh" "$(cat "${tmp}/stderr")"
@@ -222,7 +244,7 @@ FAKE_CODEX_VERSION=0.153.4 heads "${r}" "${scope}" --heads delivery --dry-run
   && pass "heads: the legacy companion pin cannot bypass the exec-only pin" || fail "exec-only version pin" "$(cat "${tmp}/stderr")"
 
 # 5. run-adversarial.sh.
-adv() { out="$(cd "$1" && "${S}/run-adversarial.sh" "$2" 2>"${tmp}/stderr")"; code=$?; }
+adv() { out="$(cd "$1" && "${S}/run-adversarial.sh" "$2" --default 2>"${tmp}/stderr")"; code=$?; }
 mkdir -p "${r}/.claude/review-profile" && printf 'Invariant ALPHA-7.\n' >"${r}/.claude/review-profile/context.md"
 prep "${r}" origin/main HEAD
 adv "${r}" "${scope}"
@@ -243,7 +265,7 @@ adv "${r}" "${plan_scope}"
 
 # 6. check-docket.sh.
 head_sha="$(git -C "${r}" rev-parse HEAD)"
-docket() { printf '%s\n' "$@" >"${tmp}/docket.md"; out="$(cd "${r}" && "${S}/check-docket.sh" "${tmp}/docket.md" "${head_sha}" 2>"${tmp}/stderr")"; code=$?; }
+docket() { printf '%s\n' 'checks: tests/run.sh green at the head' "$@" >"${tmp}/docket.md"; out="$(cd "${r}" && "${S}/check-docket.sh" "${tmp}/docket.md" "${head_sha}" 2>"${tmp}/stderr")"; code=$?; }
 docket 'Replace `src/a.txt:2-2`:' '```suggestion' 'TWO' '```'
 [ "${code}" = 0 ] && grep -q '1 suggestion block(s), 0 defect(s)' <<<"${out}" && pass "docket: an exact anchor passes" || fail "docket ok" "${out}$(cat "${tmp}/stderr")"
 docket 'Replace `src/a.txt:5-6`:' '```suggestion' 'X' '```'
@@ -285,7 +307,7 @@ vf "{\"findings\":[${ok_item/\"line\":1/\"line\":\"1\"}]}"; [ "${code}" != 0 ] &
 vf "{\"findings\":[${ok_item/delivery/style}]}"; [ "${code}" != 0 ] && has "${tmp}/stderr" "is not one of" && pass "grok schema: an unknown stance fails" || fail "schema stance" ""
 vf '{"findings":['; [ "${code}" != 0 ] && has "${tmp}/stderr" "not readable JSON" && pass "grok schema: broken JSON fails" || fail "schema json" ""
 prep "${r}" origin/main HEAD
-out="$(cd "${r}" && "${G}/run-grok.sh" "${scope}" --dry-run 2>"${tmp}/stderr")"; code=$?
+out="$(cd "${r}" && "${G}/run-grok.sh" "${scope}" --default --dry-run 2>"${tmp}/stderr")"; code=$?
 p="${scope}/grok.prompt.md"
 [ "${code}" = 0 ] && has "${p}" "ALPHA-7" && has "${p}" "adversarial finder of the r1 review panel" && has "${p}" "shared checkout ${r}" && has "${p}" "commits on origin/main" \
   && pass "grok runner: the default prompt carries the no-shell note, the base ref and the profile context" || fail "grok runner default" "$(cat "${tmp}/stderr")"
@@ -294,7 +316,140 @@ p="${scope}/heads/delivery.grok.prompt.md"
 [ "${code}" = 0 ] && has "${p}" "Tool note" && has "${p}" "Repo root: <reviewed tree>" && has "${p}" "ALPHA-7" && ! grep -q '__[A-Z_]*__' "${p}" \
   && pass "grok runner: a deep head prompt puts the reviewed tree in the preamble" || fail "grok runner deep" "$(cat "${tmp}/stderr")"
 
-# 8. Lint.
+# 8. Hardening (0.4.0): each case is the held-out check of one item of the change.
+# Item 1: every az call carries --org (and --project where az takes it) and is bounded.
+ra="${tmp}/ra"; mkrepo "${ra}" ignore
+git -C "${ra}" remote add origin https://dev.azure.com/example-org/example-project/_git/ra
+: >"${tmp}/az.argv"
+FAKE_AZ_ARGV="${tmp}/az.argv" FAKE_AZ_LIST=1 prep "${ra}" origin/main HEAD
+[ "${code}" = 0 ] && has "${tmp}/az.argv" "--org https://dev.azure.com/example-org" && has "${tmp}/az.argv" "--project example-project" && has "${scope}/scope.md" '!9 `feature/y`' \
+  && pass "az: the sibling lookup passes --org and --project from an Azure Repos origin URL" || fail "az org from origin" "$(cat "${tmp}/az.argv" "${tmp}/stderr")"
+mkdir -p "${ra}/.claude/review-profile"
+printf '{"prHost":"azure-repos","adoOrg":"https://dev.azure.com/other-org","adoProject":"other project"}\n' >"${ra}/.claude/review-profile/profile.json"
+: >"${tmp}/az.argv"
+FAKE_AZ_ARGV="${tmp}/az.argv" FAKE_AZ_LIST=1 prep "${ra}" origin/main HEAD
+[ "${code}" = 0 ] && has "${tmp}/az.argv" "--org https://dev.azure.com/other-org" && has "${tmp}/az.argv" "--project other project" \
+  && pass "profile: adoOrg and adoProject are known keys and win over the origin URL" || fail "profile adoOrg" "$(cat "${tmp}/az.argv" "${tmp}/stderr")"
+rm -rf "${ra}/.claude/review-profile"
+prep "${ra}" origin/main HEAD
+[ "${code}" = 0 ] && [ "$(grep -c '^WARN: the sibling pull request lookup failed' "${tmp}/stderr")" = 1 ] && has "${tmp}/stderr" "Can't fetch password from system" \
+  && pass "az: a failing sibling lookup prints one WARN line with the stderr tail and the scope continues" || fail "az failure warn" "$(cat "${tmp}/stderr")"
+t0="${SECONDS}"
+FAKE_AZ_SLEEP=300 prep "${ra}" origin/main HEAD
+took=$((SECONDS - t0))
+[ "${code}" = 0 ] && [ "${took}" -lt 30 ] && has "${tmp}/stderr" "timed out after 20 s" \
+  && pass "az: a hung az call ends within 30 s (${took} s) with a WARN line" || fail "az hang (${took} s)" "$(cat "${tmp}/stderr")"
+
+# Item 2: a head that is not checked out gets its own reviewed tree.
+rt="${tmp}/rt"; mkrepo "${rt}" ignore
+git -C "${rt}" switch -qc other main
+printf 'local note\n' >>"${rt}/.gitignore"
+prep "${rt}" origin/main feature; tree_scope="${scope}"
+TREE=""; [ -f "${scope}/scope.env" ] && TREE="$(. "${scope}/scope.env"; echo "${TREE:-}")"
+heads "${rt}" "${tree_scope}" --heads delivery --dry-run
+[ "${code}" = 0 ] && [ -n "${TREE}" ] && [ -d "${TREE}" ] && grep -qF -- "-C ${TREE}" <<<"${out}" \
+  && pass "tree: a head that is not checked out gets a TREE, and the runner passes the integrity check from a dirty checkout on another branch" \
+  || fail "tree prepare" "${out}$(cat "${tmp}/stderr")"
+stream '{"type":"available_commands","tools":["read_file","grep","list_dir"]}' '{"type":"text","data":"{}"}' '{"type":"end","stopReason":"end_turn","num_turns":12,"structuredOutput":{"findings":[]}}'
+out="$(cd "${rt}" && "${G}/run-grok.sh" "${tree_scope}" --default 2>"${tmp}/stderr")"; code=$?
+[ "${code}" = 0 ] && grep -q 'review-grok complete' <<<"${out}" && [ -n "${TREE}" ] && has "${tmp}/stderr" "reviewed tree ${TREE}" && [ -d "${TREE}" ] && [ "$(git -C "${rt}" worktree list | wc -l | tr -d ' ')" = 2 ] \
+  && pass "tree: the Grok runner reads the scope's TREE and adds no second worktree" || fail "tree grok" "$(cat "${tmp}/stderr")"
+if [ -n "${TREE}" ] && [ -f "${TREE}/src/a.txt" ]; then
+  printf 'x' >>"${TREE}/src/a.txt"
+  heads "${rt}" "${tree_scope}" --heads delivery --dry-run
+  [ "${code}" != 0 ] && has "${tmp}/stderr" "scoped files are modified" && pass "tree: one byte written into a scoped file of TREE is refused" || fail "tree dirty" "$(cat "${tmp}/stderr")"
+else
+  fail "tree dirty" "the scope has no TREE"
+fi
+(cd "${rt}" && "${S}/prepare-scope.sh" --cleanup "${tree_scope}" 2>"${tmp}/stderr"); code=$?
+[ "${code}" = 0 ] && [ -n "${TREE}" ] && [ ! -d "${TREE}" ] && [ "$(git -C "${rt}" worktree list | wc -l | tr -d ' ')" = 1 ] \
+  && pass "tree: prepare-scope.sh --cleanup removes the scope's TREE" || fail "tree cleanup" "$(cat "${tmp}/stderr")"
+
+# Item 3: the Grok preflight names a blocked proxy, not the model.
+stream '{"type":"end","stopReason":"end_turn"}'
+FAKE_CURL_FAIL=1 FAKE_GROK_STDERR="Couldn't set model 'grok-4.7': Invalid params: \"unknown model id\"" "${G}/grok.sh" preflight 2>"${tmp}/stderr"; code=$?
+[ "${code}" != 0 ] && has "${tmp}/stderr" "no connection to cli-chat-proxy.grok.com:443" && ! has "${tmp}/stderr" "model" \
+  && pass "grok: a denied proxy host fails the preflight with the host, not the model" || fail "grok proxy denied" "$(cat "${tmp}/stderr")"
+FAKE_GROK_STDERR="Couldn't set model 'grok-4.7': Invalid params: \"unknown model id\"" "${G}/grok.sh" preflight 2>"${tmp}/stderr"; code=$?
+[ "${code}" != 0 ] && has "${tmp}/stderr" "This error also shows when the Grok proxy cannot be reached" \
+  && pass "grok: an unknown-model-id probe error carries the proxy hint" || fail "grok unknown model hint" "$(cat "${tmp}/stderr")"
+
+# Item 4: --pr without refs reads the PR; a completed PR uses lastMergeTargetCommit and warns.
+rp="${tmp}/rp"; mkrepo "${rp}" ignore
+git -C "${rp}" remote add origin https://dev.azure.com/example-org/example-project/_git/rp
+pr_target_sha="$(git -C "${rp}" rev-parse main)"; pr_head_sha="$(git -C "${rp}" rev-parse feature)"
+git -C "${rp}" switch -q main && git -C "${rp}" merge -q --no-ff -m merge feature && git -C "${rp}" update-ref refs/remotes/origin/main HEAD
+pr_json() { printf '{"pullRequestId":5,"status":"%s","isDraft":false,"sourceRefName":"refs/heads/feature","targetRefName":"refs/heads/main","lastMergeSourceCommit":{"commitId":"%s"},"lastMergeTargetCommit":{"commitId":"%s"}}\n' "$1" "${pr_head_sha}" "${pr_target_sha}" >"${tmp}/pr.json"; }
+pr_json completed
+: >"${tmp}/az.argv"
+FAKE_AZ_ARGV="${tmp}/az.argv" FAKE_AZ_PR_JSON="${tmp}/pr.json" prep "${rp}" --pr 5; pr_scope="${scope}"
+[ "${code}" = 0 ] && grep -q '^PR_STATUS=completed$' "${scope}/scope.env" && grep -q "^BASE_SHA=${pr_target_sha}$" "${scope}/scope.env" && grep -q "^HEAD_SHA=${pr_head_sha}$" "${scope}/scope.env" \
+  && grep -q '^PR_TARGET="main"$' "${scope}/scope.env" && grep -q '^PR_DRAFT=false$' "${scope}/scope.env" && has "${scope}/files.txt" src/a.txt && has "${scope}/scope.md" "status completed" \
+  && has "${tmp}/stderr" "WARN: post-merge review; findings become follow-ups, not fixes" && grep -q '^repos pr show --id 5 .*--org https://dev.azure.com/example-org' "${tmp}/az.argv" \
+  && pass "pr: --pr without refs reads a completed PR: base lastMergeTargetCommit, status in scope.env, post-merge WARN" || fail "pr completed" "$(cat "${tmp}/stderr" "${tmp}/az.argv")"
+pr_json active
+git -C "${rp}" update-ref refs/remotes/origin/main "${pr_target_sha}"
+FAKE_AZ_PR_JSON="${tmp}/pr.json" prep "${rp}" --pr 5 --out "${tmp}/pr-active"
+[ "${code}" = 0 ] && grep -q '^PR_STATUS=active$' "${scope}/scope.env" && grep -q "^BASE_SHA=${pr_target_sha}$" "${scope}/scope.env" && ! has "${tmp}/stderr" "post-merge" \
+  && pass "pr: an active PR takes the merge base of origin/<target> and the head, without the post-merge WARN" || fail "pr active" "$(cat "${tmp}/stderr")"
+(cd "${rp}" && "${S}/prepare-scope.sh" --cleanup "${tmp}/pr-active" 2>/dev/null)
+
+# Item 5: no finder run without a depth choice.
+prep "${r}" origin/main HEAD
+(cd "${r}" && "${S}/run-adversarial.sh" "${scope}" 2>"${tmp}/stderr"); code=$?
+[ "${code}" = 2 ] && has "${tmp}/stderr" "choose the depth (--default or --deep)" && pass "depth: run-adversarial.sh without --default exits 2" || fail "depth adversarial" "$(cat "${tmp}/stderr")"
+(cd "${r}" && FAKE_CODEX_VERSION=0.167.0 "${S}/run-heads.sh" "${scope}" --dry-run 2>"${tmp}/stderr"); code=$?
+[ "${code}" = 2 ] && has "${tmp}/stderr" "choose the depth (--default or --deep)" && pass "depth: run-heads.sh without --deep exits 2" || fail "depth heads" "$(cat "${tmp}/stderr")"
+(cd "${r}" && "${G}/run-grok.sh" "${scope}" --dry-run 2>"${tmp}/stderr"); code=$?
+[ "${code}" = 2 ] && has "${tmp}/stderr" "choose the depth (--default or --deep)" && pass "depth: run-grok.sh without --default or --deep exits 2" || fail "depth grok" "$(cat "${tmp}/stderr")"
+
+# Item 7: the docket carries a checks: line.
+printf '%s\n' 'Replace `src/a.txt:2-2`:' '```suggestion' 'TWO' '```' >"${tmp}/docket.md"
+(cd "${r}" && "${S}/check-docket.sh" "${tmp}/docket.md" "${head_sha}" >/dev/null 2>"${tmp}/stderr"); code=$?
+[ "${code}" != 0 ] && has "${tmp}/stderr" "no \`checks:\` line" && pass "docket: a docket without a checks: line fails" || fail "docket checks line" "$(cat "${tmp}/stderr")"
+docket 'No findings this run would defend.'
+[ "${code}" = 0 ] && grep -q '0 suggestion block(s), 0 defect(s)' <<<"${out}" && pass "docket: a clean docket with a checks: line passes" || fail "docket clean" "${out}$(cat "${tmp}/stderr")"
+
+# Item 8: the runner removes only its own worktree. The Grok cases also require the last line of a
+# good run: under bash 3.2 an EXIT trap can turn an unbound-variable exit into status 0.
+git -C "${r}" worktree add -q --detach "${tmp}/stale" HEAD && rm -rf "${tmp}/stale" && chmod a-w "${r}/.git/worktrees/stale"
+prep "${r}" origin/main HEAD
+stream '{"type":"available_commands","tools":["read_file","grep","list_dir"]}' '{"type":"text","data":"{}"}' '{"type":"end","stopReason":"end_turn","num_turns":12,"structuredOutput":{"findings":[]}}'
+out="$(cd "${r}" && "${G}/run-grok.sh" "${scope}" --default 2>"${tmp}/stderr")"; code=$?
+[ "${code}" = 0 ] && grep -q 'review-grok complete' <<<"${out}" && ! grep -qi 'error\|failed to delete' "${tmp}/stderr" && [ -d "${r}/.git/worktrees/stale" ] && [ "$(git -C "${r}" worktree list | grep -vc stale)" = 1 ] \
+  && pass "worktree: the Grok runner removes its own worktree, prints no error and leaves another session's stale entry" || fail "worktree prune" "$(cat "${tmp}/stderr")"
+chmod u+w "${r}/.git/worktrees/stale"
+
+# Item 9: Grok runs with telemetry and the update check off.
+stream '{"type":"text","data":"none"}' '{"type":"end","stopReason":"end_turn"}'
+FAKE_GROK_ENV_OUT="${tmp}/grok.env" grokrun
+[ "${code}" = 0 ] && grep -q '^GROK_TELEMETRY_ENABLED=0$' "${tmp}/grok.env" && grep -q '^GROK_TELEMETRY_MIXPANEL_ENABLED=0$' "${tmp}/grok.env" && grep -q '^GROK_DISABLE_AUTOUPDATER=1$' "${tmp}/grok.env" \
+  && grep -q '^telemetry = false$' "${tmp}/grok.env.toml" && grep -q '^mixpanel_enabled = false$' "${tmp}/grok.env.toml" \
+  && pass "grok: the isolated GROK_HOME turns telemetry, Mixpanel and the update check off" || fail "grok telemetry" "$(cat "${tmp}/grok.env" "${tmp}/grok.env.toml" 2>&1)"
+
+# Items 10 and 11: a thin sample warns, and a PR review leaves verdict.json after the docket.
+stream '{"type":"available_commands","tools":["read_file","grep","list_dir"]}' '{"type":"text","data":"{}"}' '{"type":"end","stopReason":"end_turn","num_turns":3,"structuredOutput":{"findings":[]}}'
+out="$(cd "${rp}" && "${G}/run-grok.sh" "${pr_scope}" --default 2>"${tmp}/stderr")"; code=$?
+[ "${code}" = 0 ] && grep -q 'review-grok complete' <<<"${out}" && has "${tmp}/stderr" "WARN: thin sample (3 turns, below 8); consider a second run or --deep" \
+  && pass "grok: a 3-turn run prints the thin-sample WARN" || fail "grok thin sample" "$(cat "${tmp}/stderr")"
+printf '%s\n' 'checks: author claim, not verified in this review' 'threads: az repos pr show, 0 threads' 'verdict: approved' 'findings: 0 raised, 0 survived' 'WARN: thin sample (3 turns, below 8)' >"${tmp}/pr-docket.md"
+rm -f "${pr_scope}/verdict.json"
+(cd "${rp}" && "${S}/check-docket.sh" "${tmp}/pr-docket.md" "${pr_head_sha}" --scope "${pr_scope}" >/dev/null 2>"${tmp}/stderr"); code=$?
+v="${pr_scope}/verdict.json"
+[ "${code}" = 0 ] && [ -f "${v}" ] && python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+want = {"pr": "5", "pr_status": "completed", "head": sys.argv[2], "depth": "default", "finder": "grok", "finder_version": "grok 1.0.46", "turns": 3, "findings": 0, "survivors": 0, "verdict": "approved"}
+bad = {k: d.get(k) for k, v in want.items() if d.get(k) != v}
+sys.exit(1 if bad or len(d.get("tree", "")) != 40 or not d.get("date") else 0)' "${v}" "${pr_head_sha}" \
+  && pass "verdict: check-docket.sh --scope writes verdict.json for a PR review (PR, status, head, tree, depth, finder, turns, counts, verdict)" \
+  || fail "verdict.json" "$(cat "${tmp}/stderr" "${v}" 2>&1)"
+printf '%s\n' 'checks: tests green' 'findings: 1 raised, 0 survived' >"${tmp}/pr-docket.md"
+(cd "${rp}" && "${S}/check-docket.sh" "${tmp}/pr-docket.md" "${pr_head_sha}" --scope "${pr_scope}" >/dev/null 2>"${tmp}/stderr"); code=$?
+[ "${code}" != 0 ] && has "${tmp}/stderr" "needs a \`verdict:\` line" && pass "verdict: a PR docket without a verdict line fails" || fail "verdict line" "$(cat "${tmp}/stderr")"
+(cd "${rp}" && "${S}/prepare-scope.sh" --cleanup "${pr_scope}" 2>/dev/null)
+
+# 9. Lint.
 if command -v shellcheck >/dev/null 2>&1; then
   if lint="$(shellcheck -x "${S}"/*.sh "${G}"/*.sh "${BASH_SOURCE[0]}" 2>&1)"; then pass "shellcheck: every script"; else fail "shellcheck" "${lint}"; fi
 else

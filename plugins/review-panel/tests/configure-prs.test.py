@@ -81,7 +81,10 @@ git diff "$base" "$head" > "$out/diff.patch" 2>/dev/null || true; printf '# Revi
 
 FAKE_HEADS = """#!/usr/bin/env bash
 set -eu
-scope="$1"; heads="$3"
+scope="$1"; shift; heads="" deep=0
+while [ $# -gt 0 ]; do case "$1" in --heads) heads="$2"; shift 2 ;; --deep) deep=1; shift ;; *) shift ;; esac; done
+# The real run-heads.sh exits 2 without a depth flag (review-panel 0.4.0).
+[ "$deep" = 1 ] || { echo "FAIL: choose the depth (--default or --deep); the skill asks the user first" >&2; exit 2; }
 printf '%s\\n' "$heads" > "$scope/heads/requested.txt"
 printf 'head\\texit\\tbytes\\tstarted\\tfinished\\n' > "$scope/heads/status.tsv"
 for h in ${heads//,/ }; do

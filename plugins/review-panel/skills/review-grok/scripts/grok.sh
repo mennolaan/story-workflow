@@ -21,6 +21,19 @@
 # profile refuses to start while /var/run/docker.sock is a symlink, as OrbStack makes it
 # ("runtime-socket deny path ... endpoint is a symlink", 1.0.4 and 1.0.46). Grok refuses to start
 # when a profile cannot apply, so a set profile never degrades to no sandbox.
+# Telemetry: the isolated GROK_HOME gets a config.toml and the env with every telemetry and update
+# switch off: GROK_TELEMETRY_ENABLED=0 ([features] telemetry, the product-analytics master switch),
+# GROK_TELEMETRY_MIXPANEL_ENABLED=0 ([telemetry] mixpanel_enabled), GROK_TELEMETRY_TRACE_UPLOAD=0
+# ([telemetry] trace_upload), GROK_FEEDBACK_ENABLED=0 ([features] feedback) and
+# GROK_DISABLE_AUTOUPDATER=1 ([cli] auto_update). Source: the configuration and environment
+# variable reference built into grok 1.0.46 (`strings` of the binary), read 2026-11-11; env vars
+# take precedence over config.toml there. Not yet confirmed by a live run under a network monitor.
+# The session relay to grok.com (`relay.enabled`) is left as Grok sets it: whether a headless run
+# needs it is not verified.
+# Network: a run needs https://cli-chat-proxy.grok.com (GROK_CLI_CHAT_PROXY_BASE_URL overrides it).
+# preflight tests that connection first: behind a sandbox that blocks the host, Grok 1.0.46 reports
+# `Couldn't set model 'grok-4.7': Invalid params: "unknown model id"`, which names the model, not
+# the network (seen 2026-11-10).
 # Model: grok-4.7 unless --model is given (owner choice, 2026-10-05).
 # Bounds: --max-turns (REVIEW_GROK_MAX_TURNS, default 40) and the runner's --timeout. The
 # first plan review used 10, 11 and 14 turns and took at most 12 min 36 s per head (2026-10-05).
@@ -35,6 +48,7 @@ GROK_TOOLS="read_file,grep,list_dir"
 GROK_DENIED_TOOLS="Agent,search_tool,use_tool"
 GROK_MAX_TURNS="${REVIEW_GROK_MAX_TURNS:-40}"
 GROK_PROBE_TIMEOUT=180
+GROK_PROXY_URL="${GROK_CLI_CHAT_PROXY_BASE_URL:-https://cli-chat-proxy.grok.com/}"
 real_grok_home="${GROK_HOME:-${HOME}/.grok}"
 
 version() { grok --version 2>/dev/null | head -1 | awk '{print $2}'; }
@@ -46,7 +60,10 @@ isolated() {
   chmod 700 "${iso}"
   mkdir "${iso}/.grok"
   [ -f "${real_grok_home}/auth.json" ] && ln -s "${real_grok_home}/auth.json" "${iso}/.grok/auth.json"
+  printf '%s\n' '[cli]' 'auto_update = false' '[features]' 'telemetry = false' 'feedback = false' \
+    '[telemetry]' 'mixpanel_enabled = false' 'trace_upload = false' > "${iso}/.grok/config.toml"
   env HOME="${iso}" GROK_HOME="${iso}/.grok" GROK_DISABLE_AUTOUPDATER=1 GROK_MEMORY=0 \
+    GROK_TELEMETRY_ENABLED=0 GROK_TELEMETRY_MIXPANEL_ENABLED=0 GROK_TELEMETRY_TRACE_UPLOAD=0 GROK_FEEDBACK_ENABLED=0 \
     GROK_CLAUDE_AGENTS_ENABLED=0 GROK_CLAUDE_HOOKS_ENABLED=0 GROK_CLAUDE_MCPS_ENABLED=0 \
     GROK_CLAUDE_RULES_ENABLED=0 GROK_CLAUDE_SKILLS_ENABLED=0 "$@" || rc=$?
   rm -rf "${iso}"
@@ -60,6 +77,17 @@ base_args() {  # base_args <cwd> <model>: sets ARGS
   return 0
 }
 
+# check_proxy: one HTTPS request to the Grok chat proxy, so a blocked network is named as such.
+# Any HTTP answer passes; only a failed connection (DNS, refused, proxy CONNECT denied, timeout) fails.
+check_proxy() {
+  local host err
+  host="${GROK_PROXY_URL#*://}"; host="${host%%/*}"
+  command -v curl >/dev/null 2>&1 || { echo "WARN: curl not on PATH; the connection to ${host} is not tested before the probe" >&2; return 0; }
+  err="$(curl -sS -o /dev/null --max-time 10 "${GROK_PROXY_URL}" 2>&1)" && return 0
+  echo "FAIL: no connection to ${host}:443 (sandbox or proxy). Allow the host, then run the preflight again. curl: ${err}" >&2
+  return 1
+}
+
 preflight() {
   local static=0 probe rc=0
   [ "${1:-}" = --static ] && static=1
@@ -68,6 +96,7 @@ preflight() {
   [ -f "${real_grok_home}/auth.json" ] || [ -n "${XAI_API_KEY:-}" ] \
     || { echo "FAIL: grok is not logged in (no ${real_grok_home}/auth.json and no XAI_API_KEY); run: grok login" >&2; return 1; }
   [ "${static}" = 1 ] && return 0
+  check_proxy || return 1
   probe="$(mktemp -d "${TMPDIR:-/tmp}/review-grok-probe.XXXXXX")"
   base_args "${probe}" "${GROK_MODEL_DEFAULT}"
   timeout_prefix "${GROK_PROBE_TIMEOUT}"
@@ -77,6 +106,8 @@ preflight() {
     [ "${rc}" = "${TIMEOUT_EXIT}" ] && echo "FAIL: the grok probe turn timed out after ${GROK_PROBE_TIMEOUT} s" >&2
     echo "FAIL: the grok probe turn exited ${rc}; see the error below. A login problem: run grok login. A sandbox problem: unset REVIEW_GROK_SANDBOX or fix the cause it names." >&2
     tail -5 "${probe}.err" >&2
+    grep -q 'unknown model id' "${probe}.err" \
+      && echo "This error also shows when the Grok proxy cannot be reached: allow ${GROK_PROXY_URL} in the sandbox or proxy, then run the preflight again." >&2
     rm -rf "${probe}" "${probe}.ndjson" "${probe}.err"; return 1
   fi
   python3 - "${probe}.ndjson" "${GROK_TOOLS}" <<'PY' || rc=1

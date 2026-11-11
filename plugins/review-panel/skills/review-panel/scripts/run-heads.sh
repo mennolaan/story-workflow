@@ -3,7 +3,11 @@
 # one prepared scope directory. Renders heads/<name>.md behind the shared
 # preamble into <scope>/heads/<name>.prompt.md, runs `codex exec` per head,
 # writes <name>.out.md (final message), <name>.log (events) and status.tsv.
-# Usage: run-heads.sh <scope-dir> [--heads a,b,c] [--effort <none|minimal|low|medium|high|xhigh|max>] [--model gpt-6.1-sol] [--dry-run]
+# Usage: run-heads.sh <scope-dir> --deep [--heads a,b,c] [--effort <none|minimal|low|medium|high|xhigh|max>] [--model gpt-6.1-sol] [--dry-run]
+# --deep is the depth the user chose (step 3 of SKILL.md); without it the runner
+# exits 2. A plan scope needs no depth flag: the plan heads are its only mode.
+# Default mode is run-adversarial.sh --default. The heads read the reviewed tree:
+# TREE of scope.env when prepare-scope.sh added one, else the repo.
 # Heads default to deepHeads of the review profile, else the seven: delivery
 # dependency identity parity situate reach falsify. conform, daytwo,
 # invariants and ux stay in the library and are selected explicitly; a plan
@@ -25,9 +29,11 @@ set -euo pipefail
 
 skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo="$(git rev-parse --show-toplevel)"
-scope="" heads="" effort="" model="gpt-6.1-sol" dry=0
+scope="" heads="" effort="" model="gpt-6.1-sol" dry=0 depth=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --deep) depth=deep; shift ;;
+    --default) echo "FAIL: default mode is one adversarial review: run run-adversarial.sh <scope> --default; run-heads.sh runs the deep heads (--deep)" >&2; exit 2 ;;
     --heads) heads="$2"; shift 2 ;;
     --effort) effort="$2"; shift 2 ;;
     --model)
@@ -49,6 +55,8 @@ scope="$(cd "${scope}" && pwd)"
 # shellcheck disable=SC1091
 . "${skill_dir}/scripts/profile.sh"
 check_scope_integrity "${scope}" "${repo}" || exit 1
+[ -n "${depth}" ] || [ "${MODE}" = plan ] || { echo "FAIL: choose the depth (--default or --deep); the skill asks the user first" >&2; exit 2; }
+[ "${MODE}" = plan ] && depth=plan
 load_profile "${repo}" || exit 1
 if [ -z "${heads}" ]; then
   if [ "${MODE}" = plan ]; then heads="${PLAN_HEADS}"; else heads="${DEEP_HEADS}"; fi
@@ -58,7 +66,7 @@ codex_version="$(codex --version 2>/dev/null | head -1 | sed -E 's/^codex-cli //
 check_pin "codex CLI" "${codex_version}" "${SUPPORTED_HEAD_CODEX_VERSIONS}" || exit 1
 verified="$(awk '/^## Verified facts/{f=1;next} /^## /{f=0} f && !/^- ?$/ && NF' "${scope}/facts.md" | wc -l | tr -d ' ')"
 [ "${verified}" -gt 0 ] || echo "WARN: facts.md 'Verified facts' is empty; heads will report fact-sheet gaps instead of grounded claims" >&2
-echo "codex heads: codex-cli ${codex_version}, mode ${MODE}, head ${HEAD_SHA:0:12}, heads ${heads}, model ${model}, effort ${effort:-config-default}" >&2
+echo "codex heads: codex-cli ${codex_version}, mode ${MODE}, head ${HEAD_SHA:0:12}, heads ${heads}, model ${model}, effort ${effort:-config-default}, reviewed tree ${REVIEWED}" >&2
 
 render() {  # render <head>
   # No finding cap: a stated maximum reads as a target. Measured 2026-08-19,
@@ -68,7 +76,7 @@ render() {  # render <head>
   local head="$1" parts=()
   while IFS= read -r f; do parts+=("${f}"); done < <(head_parts "${head}") || return 1
   [ "${#parts[@]}" -gt 0 ] || return 1
-  render_prompt "${scope}/heads/${head}.prompt.md" "SCOPE_DIR=${scope}" "REPO=${repo}" "TRIGGER_LABEL=$(trigger_label "${head}")" \
+  render_prompt "${scope}/heads/${head}.prompt.md" "SCOPE_DIR=${scope}" "REPO=${REVIEWED}" "TRIGGER_LABEL=$(trigger_label "${head}")" \
     -- "${skill_dir}/heads/_preamble.md" "${parts[@]}"
 }
 
@@ -76,7 +84,7 @@ render() {  # render <head>
 # none" and <head>.log records 4 lines of prose for 38 tool calls, so a head's
 # deliberation cannot be audited after the fact. Key verified against codex-cli
 # 0.146.0, 2026-08-19.
-args=(exec --sandbox read-only -C "${repo}" --color never -m "${model}" -c model_reasoning_summary="auto")
+args=(exec --sandbox read-only -C "${REVIEWED}" --color never -m "${model}" -c model_reasoning_summary="auto")
 [ -n "${effort}" ] && args+=(-c "model_reasoning_effort=\"${effort}\"")
 
 IFS=',' read -r -a head_list <<< "${heads}"
@@ -89,6 +97,7 @@ for head in "${head_list[@]}"; do
   pids+=($!); names+=("${head}")
 done
 [ "${dry}" = 1 ] && exit 0
+write_finder_env "${scope}" codex "codex-cli ${codex_version}, ${model}" "${depth}" ""
 
 rc=0
 { echo -e "head\texit\tbytes\tstarted\tfinished"; } > "${scope}/heads/status.tsv"
