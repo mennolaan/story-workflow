@@ -64,10 +64,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # nojq_child: the session is bound to a child role. Bash built-ins and grep
 # only, because it runs when jq is missing.
 nojq_child() {
-  local dir k sid=""
+  local dir k sid="" host="${CLAUDE_CODE_HOST_SESSION_ID:-}" own="${CLAUDE_CODE_SESSION_ID:-}"
   dir="$(story_plans_dir)" || return 1
   [[ "${input}" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([A-Za-z0-9._-]*)\" ]] && sid="${BASH_REMATCH[1]}"
-  for k in "${CLAUDE_CODE_HOST_SESSION_ID//[^A-Za-z0-9._-]/}" "${sid}" "${CLAUDE_CODE_SESSION_ID//[^A-Za-z0-9._-]/}"; do
+  # Copies with a default: bash 5.3 stops on ${UNSET//x/} under set -u.
+  for k in "${host//[^A-Za-z0-9._-]/}" "${sid}" "${own//[^A-Za-z0-9._-]/}"; do
     [ -n "${k}" ] && [ -f "${dir}/.sessions/${k}.json" ] || continue
     grep -Eq '"role"[[:space:]]*:[[:space:]]*"(plan|implement|pr-review)"' "${dir}/.sessions/${k}.json"
     return

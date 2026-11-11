@@ -56,6 +56,42 @@ With `/story` (the story-workflow plugin), set the `review` block of `.claude/st
 }
 ```
 
+## Review teammates' pull requests (Azure DevOps)
+
+`/review-panel:configure-prs` reviews your teammates' pull requests as they come
+in, so nobody has to ask for a review. Open a session in any repo and run it:
+
+```text
+/review-panel:configure-prs
+```
+
+- It asks for the Azure DevOps URL to watch: a project
+  (`https://dev.azure.com/<org>/<project>`) or repos (`.../_git/<repo>`). You
+  can also pass the URLs right away. It saves them, with your identity from
+  `az account show`, in `~/.claude/review-watch/config.json`, and starts polling.
+- In a later session, run it again without a URL: it reuses the saved config
+  and starts polling. Pass a URL to replace the config.
+- A script polls every 30 minutes on weekdays from 08:00 to 18:00. It uses no
+  model: the session waits at zero tokens and wakes only when an active PR that
+  is not yours, not a draft and not from a pipeline identity (Build Service) has
+  commits it has not reviewed.
+- The session then runs the default review-panel review (Codex finds, the
+  session judges) and posts on the PR: one inline comment per Blocking or
+  Should-fix finding (at most 10) and one summary. The summary carries a marker
+  with the reviewed commit, so a PR is reviewed again only after new commits,
+  and then only the new changes.
+- It never votes, approves or completes a PR, never runs the PR's code and posts
+  only comments. They post under your Azure DevOps identity and say they are
+  automated.
+- One poller per machine; a second session that starts one is told that another
+  session is already watching. The session must stay open; a closed app or a
+  sleeping Mac pauses the watch.
+- Needs `az` with the `azure-devops` extension, logged in (`az login`), plus
+  the review-panel requirements (Codex and its companion).
+
+Cost: nothing while waiting. Each review is one Codex run plus one judge turn
+in the session.
+
 ## The review profile
 
 Without a profile the panel reads CLAUDE.md and AGENTS.md for the repo rules, and runs on its generic prompts. A profile makes the finders and the judge know your project. Put it in `.claude/review-profile/` of the repo and commit it. Every file is optional. `profile.example/` in this plugin is a complete example.
@@ -90,6 +126,10 @@ Print the resolved profile:
 
 ```bash
 tests/review-panel-matrix.sh
+```
+
+```bash
+python3 tests/configure-prs.test.py
 ```
 
 ```bash
