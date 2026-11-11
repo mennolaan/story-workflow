@@ -1305,22 +1305,22 @@ sg_plan() { # sg_plan <file> <rows...>: a plan with a claims table under Order o
 
 # Story 428 as its plan read on 2026-11-02: 432 may add its job to JobService.cs.
 R428=(
-'| #429 | F | - | `backend/Eiffel.Infrastructure/Data/`, `backend/Eiffel.Core/Abstractions/IConsultantIdentityStore.cs`, `backend/Eiffel.Infrastructure/Ingestion/EasyCv/EmployeeKeyMap.cs` | - |'
-'| #674 | F | 429 | `backend/Eiffel.Api/Endpoints/ProfileEndpoints.cs#own-consultant`, `backend/Eiffel.Api/Endpoints/CvDocumentEndpoints.cs#own-consultant` | - |'
-'| #430 | T | 429 | `backend/Eiffel.Infrastructure/Ingestion/EasyCv/EmployeeKeyLoader.cs`, `backend/Eiffel.Infrastructure/Ingestion/Bullhorn/BullhornLinkPass.cs`, `backend/Eiffel.Api/Services/JobService.cs` | A |'
-'| #431 | T | 429 | `backend/Eiffel.Infrastructure/Ingestion/Afas/AfasAvailabilityLoader.cs`, `backend/Eiffel.Infrastructure/Ingestion/Ted/TedEmployeeLoader.cs` | A |'
-'| #676 | T | 431 | `backend/Eiffel.Infrastructure/Ingestion/Ted/TedEmployeeLoader.cs` | A |'
-'| #432 | T | 429 | `backend/Eiffel.Infrastructure/Ingestion/Bullhorn/BullhornPlacementLoader.cs`, `backend/Eiffel.Core/Options/BullhornPlacementOptions.cs`, `backend/Eiffel.Pipeline/appsettings.json`, `backend/Eiffel.Core/Eval/`, `backend/Eiffel.Core/Models/Eval.cs`, `backend/Eiffel.Api/Services/JobService.cs` | B |'
-'| #675 | T | 432 | `backend/Eiffel.Core/Eval/`, `backend/Eiffel.Core/Pipeline/MatchingPipeline.cs#eval-block` | B |'
-'| #634 | T | 429 | `backend/Eiffel.Api/Endpoints/ConsultantLinkEndpoints.cs`, `backend/Eiffel.Core/Matching/RunExclusion.cs`, `backend/Eiffel.Core/Pipeline/MatchingPipeline.cs#leaver-gate` | C |'
+'| #429 | F | - | `backend/Shop.Infrastructure/Data/`, `backend/Shop.Core/Abstractions/IConsultantIdentityStore.cs`, `backend/Shop.Infrastructure/Ingestion/EasyCv/EmployeeKeyMap.cs` | - |'
+'| #674 | F | 429 | `backend/Shop.Api/Endpoints/ProfileEndpoints.cs#own-consultant`, `backend/Shop.Api/Endpoints/CvDocumentEndpoints.cs#own-consultant` | - |'
+'| #430 | T | 429 | `backend/Shop.Infrastructure/Ingestion/EasyCv/EmployeeKeyLoader.cs`, `backend/Shop.Infrastructure/Ingestion/Bullhorn/BullhornLinkPass.cs`, `backend/Shop.Api/Services/JobService.cs` | A |'
+'| #431 | T | 429 | `backend/Shop.Infrastructure/Ingestion/Afas/AfasAvailabilityLoader.cs`, `backend/Shop.Infrastructure/Ingestion/Ted/TedEmployeeLoader.cs` | A |'
+'| #676 | T | 431 | `backend/Shop.Infrastructure/Ingestion/Ted/TedEmployeeLoader.cs` | A |'
+'| #432 | T | 429 | `backend/Shop.Infrastructure/Ingestion/Bullhorn/BullhornPlacementLoader.cs`, `backend/Shop.Core/Options/BullhornPlacementOptions.cs`, `backend/Shop.Pipeline/appsettings.json`, `backend/Shop.Core/Eval/`, `backend/Shop.Core/Models/Eval.cs`, `backend/Shop.Api/Services/JobService.cs` | B |'
+'| #675 | T | 432 | `backend/Shop.Core/Eval/`, `backend/Shop.Core/Pipeline/MatchingPipeline.cs#eval-block` | B |'
+'| #634 | T | 429 | `backend/Shop.Api/Endpoints/ConsultantLinkEndpoints.cs`, `backend/Shop.Core/Matching/RunExclusion.cs`, `backend/Shop.Core/Pipeline/MatchingPipeline.cs#leaver-gate` | C |'
 '| #677 | T | 634 | `frontend/components/gwp/beheer/` | C |'
-'| #560 | T | 429 | `backend/Eiffel.Core/Pipeline/DirectorySynchronizer.cs` | C |'
-'| #673 | T | 429 | `frontend/components/gwp/cv/CvReview.tsx`, `frontend/app/(app)/consultant/[id]/page.tsx`, `frontend/lib/consultantDetail.ts`, `backend/Eiffel.Api/Endpoints/ProfileEndpoints.cs#read-model` | C |'
+'| #560 | T | 429 | `backend/Shop.Core/Pipeline/DirectorySynchronizer.cs` | C |'
+'| #673 | T | 429 | `frontend/components/gwp/cv/CvReview.tsx`, `frontend/app/(app)/consultant/[id]/page.tsx`, `frontend/lib/consultantDetail.ts`, `backend/Shop.Api/Endpoints/ProfileEndpoints.cs#read-model` | C |'
 '| #433 | I | 430,431,676,432,675,634,677,560,673 | `docs/wiki/` | - |'
 )
 sg_plan "${tmp}/sg-428.md" "${R428[@]}"
 sg_run "${tmp}/sg-428.md"
-[ "${code}" -eq 2 ] && [[ "${out}" == *"REFUSE 430 432 tracks A B file backend/Eiffel.Api/Services/JobService.cs"* ]] && [[ "${out}" == *"TRACK A+B 430 431 676 432 675"* ]] \
+[ "${code}" -eq 2 ] && [[ "${out}" == *"REFUSE 430 432 tracks A B file backend/Shop.Api/Services/JobService.cs"* ]] && [[ "${out}" == *"TRACK A+B 430 431 676 432 675"* ]] \
   && pass "groups: 428 as written: A and B both claim JobService.cs, so the test refuses the split and merges them" || fail "groups: 428 as written" "${out}"
 R428F=("${R428[@]}")
 R428F[2]="${R428F[2]//JobService.cs\`/JobService.cs#load-easycv-order\`}"

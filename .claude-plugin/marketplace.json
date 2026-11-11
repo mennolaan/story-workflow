@@ -13,7 +13,7 @@
     {
       "name": "review-panel",
       "source": "./plugins/review-panel",
-      "description": "Pre-PR, PR and plan review: Codex or Grok finds, the main thread judges. Per-repo rules in .claude/review-profile/."
+      "description": "Pre-PR, PR and plan review: Codex or Grok finds, the main thread judges. Per-repo rules in .claude/review-profile/. configure-prs reviews teammates' Azure DevOps PRs as they come in."
     }
   ]
 }
