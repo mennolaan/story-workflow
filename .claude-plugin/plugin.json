@@ -1,6 +1,6 @@
 {
   "name": "story-workflow",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Run board stories through parallel handoffs, explicit model/effort routing, documentation lifecycle, requirements traceability, agent evals and scoped Codex reviews. Adds /story, /checkpoint, /documentation, /requirements and context-keeper. A repo opts in with .claude/story.json.",
   "author": {
     "name": "Menno Laan"

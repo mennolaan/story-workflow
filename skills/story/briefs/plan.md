@@ -79,6 +79,8 @@ and `review` overhead rows for the story-branch session:
 
 Profiles: `retrieval` and `verification` = Haiku/low; `implementation` =
 Sonnet/medium; `review` = Sonnet/high; `complex` and `planning` = Opus/high.
+`planning-large` = Fable 5.2/medium is the orchestrator's route for the plan
+session of a large story; do not use it for a task row.
 Choose `complex` for ambiguous architecture, security-sensitive decisions,
 concurrency defects or difficult diagnosis, and explain the concrete reason.
 Executing a known test command is verification; writing tests is implementation;

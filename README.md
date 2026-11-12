@@ -87,8 +87,9 @@ To work on the plugin, clone this repo and add the clone to `env.CLAUDE_CODE_PLU
 | `parallel.shared` | Globs of shared or generated files, for example lockfiles. A track task that claims one moves to the story-branch session. `*` also matches `/`, and `**/x` also matches `x` at the repo root. Default none. |
 | `routing.startupTokens` | Estimated startup context per handoff. Default 100000, to be replaced by measurement for the consuming repo. Not a universal Claude Code overhead. |
 | `routing.targetSessionTokens` | Advisory handoff context target, including startup and owned task input/work estimates. Default 200000. The resolver lowers the target to the model checkpoint or 85% of `backstopTokens` when earlier. Reaching it produces a sizing warning, not a launch refusal. Compaction remains allowed. This is not a spend limit or live meter. |
-| `routing.profiles` | Optional per-profile overrides of `family` (`haiku`, `sonnet`, `opus`) and `effort` (`low`, `medium`, `high`, `xhigh`, `max`). Defaults below. Unknown profile/setting names fail validation. |
-| `routing.models` | Optional per-family overrides of `id` and `window` (tokens), for example `{"sonnet":{"id":"my-sonnet-deployment","window":200000}}`. Defaults pin the Anthropic 5.5 IDs with 1M windows. Verify provider/model availability and supported effort levels before overriding. |
+| `routing.profiles` | Optional per-profile overrides of `family` (`haiku`, `sonnet`, `opus`, `fable`) and `effort` (`low`, `medium`, `high`, `xhigh`, `max`). Defaults below. Unknown profile/setting names fail validation. |
+| `routing.largeStory` | Optional `storyPoints` (default 30) and `titlePattern` (a jq regex; default matches `L`, `XL` or `XXL` as a separate word) that make a story large, so its plan runs on `planning-large`. |
+| `routing.models` | Optional per-family overrides of `id` and `window` (tokens) for `haiku`, `sonnet`, `opus` and `fable`, for example `{"sonnet":{"id":"my-sonnet-deployment","window":200000}}`. Defaults pin the Anthropic 5.5 IDs and `claude-fable-5-2`, all with 1M windows. Verify provider/model availability and supported effort levels before overriding. |
 
 ## Model routing and bounded handoffs
 
@@ -100,6 +101,7 @@ and `review` overhead rows. Each row names `id`, `profile`, `inputTokens`,
 | Profile | Default model | Effort | Work |
 |---|---|---|---|
 | `planning` | Opus 5.5 | high | decomposition, architecture, conflicting evidence |
+| `planning-large` | Fable 5.2 | medium | the plan session of a large story (see below); not for task rows |
 | `implementation` | Sonnet 5.5 | medium | specified features, writing tests, routine diagnosis |
 | `complex` | Opus 5.5 | high | difficult diagnosis, security/concurrency decisions |
 | `review` | Sonnet 5.5 | high | whole-story review and judging evidence |
@@ -108,7 +110,22 @@ and `review` overhead rows. Each row names `id`, `profile`, `inputTokens`,
 | `retrieval` | Haiku 5.5 | low | fetch/extract named wiki, Confluence, docs or board facts |
 | `verification` | Haiku 5.5 | low | execute known commands and extract failure evidence |
 
-Before a plan session, resolve `hooks/story-route.sh plan`. At the plan gate:
+Before a plan session, resolve the plan route with the story's size, taken from
+the board digest:
+
+```bash
+hooks/story-route.sh plan --story-points 34 --story-title "[L] Checkout redesign"
+```
+
+A story is large at `routing.largeStory.storyPoints` (default 30) or more, or
+when its title matches `routing.largeStory.titlePattern` (default: `L`, `XL` or
+`XXL` as a separate word, such as `[L] ...`, `... (XL)` or `Size: L`). A large
+story plans on `planning-large`, Fable 5.2/medium; the output says
+`"largeStory": true` and why. Desktop starts a session at most at the caller's
+model, so the orchestrator must itself run on Fable 5.2 to start a Fable plan;
+otherwise it asks you to switch it or to plan on Opus.
+
+At the plan gate:
 
 ```bash
 hooks/story-route.sh --check /absolute/path/to/plan.md /absolute/path/to/routing.json

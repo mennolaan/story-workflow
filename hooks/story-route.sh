@@ -4,7 +4,10 @@
 #                      [<routing.json> <task,task,...>]
 #        story-route.sh <requirements-review|architect-review|documentation-review|requirements-verify>
 #                      [--profile <profile>] [--effort <level>]
+#        story-route.sh plan --story-points <n|none> --story-title <title>
 #        story-route.sh --check <plan.md> <routing.json>
+# A large plan (routing.largeStory: default 30+ story points or L/XL/XXL in the
+# title) resolves to the planning-large profile, Fable 5.2/medium by default.
 # --check validates coverage and budgets using the safe groups, including moves
 # and joins, from story-groups.sh. Sequential mode budgets the entire story.
 # routing.json: {"tasks":[{"id":"101","profile":"implementation",
@@ -19,7 +22,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "${here}/story-lib.sh"
 die() { printf 'story-route: %s\n' "$1" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die 'jq is not on PATH.'
-profile="" effort_override=""
+profile="" effort_override="" story_given="" story_points="" story_title=""
 args=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -29,6 +32,12 @@ while [ "$#" -gt 0 ]; do
     --effort)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "${effort_override}" ] || die '--effort requires one nonempty value and may appear only once.'
       effort_override="$2"; shift 2 ;;
+    --story-points)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "${story_points}" ] || die '--story-points requires one value (a number or none) and may appear only once.'
+      story_given=1; story_points="$2"; [ "$2" != none ] || story_points=""; shift 2 ;;
+    --story-title)
+      [ "$#" -ge 2 ] && [ -z "${story_title}" ] || die '--story-title requires one value and may appear only once.'
+      story_given=1; story_title="$2"; shift 2 ;;
     *) args+=("$1"); shift ;;
   esac
 done
@@ -41,6 +50,7 @@ case "$1" in
   *)
     [ -z "${profile}${effort_override}" ] || die '--profile/--effort are only for requirements-review, architect-review, documentation-review and requirements-verify.' ;;
 esac
+[ -z "${story_given}" ] || [ "$1" = plan ] || die '--story-points/--story-title are only for the plan role.'
 cfg="$(story_config_file)"
 [ -f "${cfg}" ] || die "missing ${cfg}."
 if [ "$1" = --check ]; then
@@ -72,6 +82,7 @@ if [ "$#" -eq 3 ]; then
 fi
 result="$(jq -en --slurpfile configs "${cfg}" --argjson manifest "${manifest}" \
   --arg role "$1" --arg ids "${3:-}" --arg profile "${profile}" --arg effort "${effort_override}" \
+  --arg storyGiven "${story_given}" --arg points "${story_points}" --arg title "${story_title}" \
   -f "${here}/story-route.jq")" || die 'routing failed; fix the config or manifest before starting a session.'
 
 # The environment outranks explicit effort, including subagent frontmatter.

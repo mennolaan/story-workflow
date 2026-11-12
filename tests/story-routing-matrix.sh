@@ -34,6 +34,19 @@ deny() {
 }
 
 args=(plan); expect 'planning remains Opus/high' '.model == "claude-opus-5-5" and .effort == "high"'
+args=(plan --story-points 34 --story-title 'Checkout redesign'); expect 'a story of 34 points plans on Fable/medium' '.model == "claude-fable-5-2" and .family == "fable" and .effort == "medium" and .largeStory == true and (.reason|contains("34 story points"))'
+args=(plan --story-points 30 --story-title 'Checkout redesign'); expect 'exactly 30 points is large' '.family == "fable" and .largeStory == true'
+args=(plan --story-points 29.5 --story-title 'Checkout redesign'); expect 'below 30 points stays Opus/high' '.family == "opus" and .effort == "high" and .largeStory == false'
+args=(plan --story-points none --story-title '[L] Checkout redesign'); expect 'an L tag in the title is large without points' '.family == "fable" and (.reason|contains("title"))'
+args=(plan --story-points 5 --story-title 'Checkout redesign (XL)'); expect 'an XL title is large even with few points' '.family == "fable"'
+args=(plan --story-points none --story-title 'Size: L - checkout'); expect 'a Size: L title is large' '.family == "fable"'
+args=(plan --story-points 8 --story-title 'Add L2 cache for Lookup'); expect 'an L inside a word is not a size' '.family == "opus" and .largeStory == false'
+args=(plan --story-points 8 --story-title 'checkout (l)'); expect 'a lowercase l is not a size' '.family == "opus"'
+args=(plan); expect 'plan without size stays Opus/high and says nothing about size' '.family == "opus" and .largeStory == null'
+args=(plan --story-points many --story-title x); deny 'non-numeric story points fail' 'routing failed'
+args=(plan --story-points 40 --story-points 40); deny 'duplicate story points fail' 'may appear only once'
+args=(pr-review --story-points 40); deny 'story size is for the plan role only' 'only for the plan role'
+args=(plan --story-points 40 --story-title x); deny 'Fable plan refuses a conflicting effort environment' 'overrides medium' CLAUDE_CODE_EFFORT_LEVEL=high
 args=(pr-review); expect 'review starts Sonnet/high' '.family == "sonnet" and .effort == "high"'
 args=(requirements-review); expect 'requirements review starts Sonnet/medium' '.role == "requirements-review" and .family == "sonnet" and .effort == "medium"'
 args=(architect-review); expect 'conditional architecture review starts Sonnet/high' '.role == "architect-review" and .family == "sonnet" and .effort == "high"'
@@ -101,7 +114,19 @@ printf '{"backstopTokens":120000}\n' >"${cfg}"
 expect 'earlier backstop affects the compaction warning' '.sessionTargetTokens == 102000 and .compactionLikely == true'
 printf '{"routing":{"targetSessionTokens":50000}}\n' >"${cfg}"
 expect 'startup above the target remains advisory' '.sessionTargetTokens == 50000 and .sizing == "consider-splitting"'
-for bad in '{"routing":false}' '{"routing":{"profiles":false}}' '{"routing":{"profiles":{"unknown":{}}}}' '{"routing":{"targetSessionTokens":"200000"}}' '{"routing":{"startupTokens":false}}' '{"routing":{"profiles":{"implementation":{"effort":"typo"}}}}' '{"routing":{"modles":{}}}'; do
+printf '{"routing":{"largeStory":{"storyPoints":20}}}\n' >"${cfg}"
+args=(plan --story-points 21 --story-title x); expect 'repo can lower the large story threshold' '.family == "fable" and (.reason|contains("large from 20"))'
+printf '{"routing":{"largeStory":{"titlePattern":"\\\\[BIG\\\\]"}}}\n' >"${cfg}"
+args=(plan --story-points none --story-title '[BIG] Checkout'); expect 'repo can set its own title pattern' '.family == "fable"'
+args=(plan --story-points none --story-title '[L] Checkout'); expect 'a custom pattern replaces the default' '.family == "opus"'
+printf '{"routing":{"models":{"fable":{"id":"deployment-fable"}},"profiles":{"planning-large":{"effort":"high"}}}}\n' >"${cfg}"
+args=(plan --story-points 40 --story-title x); expect 'fable id and planning-large effort are configurable' '.model == "deployment-fable" and .effort == "high"'
+printf '{}\n' >"${cfg}"
+jq '.tasks[1].profile = "planning-large"' "${tmp}/original.json" >"${manifest}"
+args=(implement-track "${manifest}" 2); deny 'planning-large cannot be a task profile' 'known profile'
+cp "${tmp}/original.json" "${manifest}"
+args=(implement-track "${manifest}" 2)
+for bad in '{"routing":false}' '{"routing":{"profiles":false}}' '{"routing":{"profiles":{"unknown":{}}}}' '{"routing":{"targetSessionTokens":"200000"}}' '{"routing":{"startupTokens":false}}' '{"routing":{"profiles":{"implementation":{"effort":"typo"}}}}' '{"routing":{"modles":{}}}' '{"routing":{"largeStory":5}}' '{"routing":{"largeStory":{"points":30}}}' '{"routing":{"largeStory":{"storyPoints":0}}}' '{"routing":{"largeStory":{"titlePattern":"("}}}'; do
  printf '%s\n' "${bad}" >"${cfg}"
  deny "invalid config fails: ${bad}" 'routing failed'
 done
