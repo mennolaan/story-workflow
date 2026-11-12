@@ -22,7 +22,7 @@ Give the digest in this form, and nothing else:
 
 - Line 1: `READ OK`, or `READ FAILED: <the error text, word for word>`.
 - `Commands:` each command that ran, one per line.
-- Per item: id, type, title, state, assigned to, iteration or milestone, labels or tags.
+- Per item: id, type, title, state, assigned to, iteration or milestone, labels or tags, and story points (the Story Points, Effort or Size field) or `none`.
 - `Description:` and `Acceptance criteria:` as plain text. Remove the HTML tags. Copy the text word for word and in full. A GitHub issue body often holds both: copy the body in full.
 - `Tasks:` one line per child: id, title, state, remaining work.
 - `Relations:` parent, children, pull requests, branches, commits.

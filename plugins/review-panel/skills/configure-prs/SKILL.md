@@ -87,9 +87,10 @@ session from a turn that a background task woke, so the judge is a headless
    --autocompact 500k` (setup `--model`, `--effort`, `--context-cap`; optional
    `--max-budget-usd` caps the spend per PR). Its prompt is `judge-prompt.md`
    beside this file: review-panel steps 5 to 7, the existing threads for the
-   cross-off only, then `watch.py post`. It works in the scope folder and may
-   write only there; it can read the checkout and run only `git -C <worktree>`
-   reads, `watch.py threads` and `watch.py post`.
+   cross-off only, then `watch.py post`. It works in the PR checkout and may
+   write only in the scope folder (the docket); it can read files and run only
+   plain git reads (`git diff`, `show`, `log`, `grep`, `blame`, `ls-files`),
+   `watch.py threads` and `watch.py post`.
 4. `post` puts Blocking and Should-fix items inline (at most 10) and the rest in
    one summary that marks the reviewed head, so the head is not reviewed again.
 5. The worktree is removed. The scope, head outputs, docket and judge log stay

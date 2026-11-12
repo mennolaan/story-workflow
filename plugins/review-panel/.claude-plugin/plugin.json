@@ -1,6 +1,6 @@
 {
   "name": "review-panel",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Pre-PR, PR and plan review: Codex (or Grok) finds, the main thread judges every finding against the repo and a dated fact sheet. A repo adds its own rules with .claude/review-profile/. configure-prs reviews teammates' Azure DevOps pull requests as they come in.",
   "author": {
     "name": "Menno Laan"
