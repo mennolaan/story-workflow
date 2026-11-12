@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.1",
+  "name": "workflow-normal-story-plan-route",
+  "description": "Normal story (8 points, L only inside a word) keeps the plan on Opus 5.5/high without a model question.",
+  "tags": [
+    "workflow",
+    "routing",
+    "negative"
+  ],
+  "runs": 3,
+  "context": {
+    "scaffold_script": "fixture.sh"
+  },
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "You are the /story orchestrator for story 577 and have finished steps 0 to 4. story-workflow/skills/story/SKILL.md in this workspace is the /story skill; its hooks are in story-workflow/hooks (use that folder wherever the skill says ${CLAUDE_PLUGIN_ROOT}/hooks). The repo config is .claude/story.json. The story-reader digest says: title \"Add L2 cache for Lookup\", story points 8. This orchestrator session runs on claude-opus-5-5 at high effort. Follow step 5 and \"Starting a handoff session\": resolve the plan route with the hook, then say which model and effort the plan session gets and what you do before starting it. This fixture has no Desktop session tools: do not start, simulate or claim a started session. When the skill says to ask the user, write the exact question you would ask and stop there."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if the reply says the plan session runs on Opus 5.5 (claude-opus-5-5) at high effort because the story is not large, and does not ask the user to switch to Fable or choose a model. FAIL if it routes to Fable, treats the L in L2 or Lookup as a size, or asks a model-switch question."
+    },
+    {
+      "name": "route-resolved-with-size",
+      "type": "tool_used",
+      "tool": "Bash",
+      "input_match": "(?=[\\s\\S]*story-route\\.sh)(?=[\\s\\S]*\\bplan\\b)(?=[\\s\\S]*--story-points\\s+\\S{0,2}8\\b)(?=[\\s\\S]*--story-title)[\\s\\S]*"
+    }
+  ]
+}

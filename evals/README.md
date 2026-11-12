@@ -53,6 +53,23 @@ only these cases need a shell grant. They run in isolated eval workspaces:
 claude plugin eval . --tag agents --tag workflow --runs 3 --ablation none --model sonnet --judge-model sonnet --allow-tools Bash --concurrency 1 --max-cost-usd 15 --keep-temp --no-publish --trust-plugin
 ```
 
+The large-story plan route cases copy the shipped `/story` skill, the routing
+hooks and `story.example.json` into the run's workspace with a `fixture.sh`
+scaffold, so the model reads the real rules and runs the real `story-route.sh`.
+They need `--scaffold` (our own script, run as you) and a shell grant:
+
+```bash
+claude plugin eval . --case 'workflow-*-story-plan-route' --runs 3 --ablation none --model sonnet --judge-model sonnet --allow-tools Bash --scaffold --concurrency 2 --max-cost-usd 5 --keep-temp --no-publish --trust-plugin
+```
+
+`--case` takes one glob; a second `--case` replaces the first. Run
+`agent-story-reader-story-points` (story points in the digest) with the agents
+command above.
+
+They check the decision only: a large story routes the plan to Fable 5.2/medium
+and an Opus orchestrator asks before starting it; a normal story stays on
+Opus/high. Desktop's `start_session` model cap needs a real `/story` run.
+
 Candidate model selection stays explicit via `--model`; choose the grader model
 independently via `--judge-model`. Agent fixtures also set explicit worker model
 and effort in their task prompts. Verify actual Agent call inputs/trace; native

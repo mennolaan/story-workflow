@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.1",
+  "name": "agent-story-reader-story-points",
+  "description": "The story reader reports story points from an Azure DevOps work item, so the orchestrator can size the plan.",
+  "tags": [
+    "agents",
+    "retrieval",
+    "routing"
+  ],
+  "runs": 3,
+  "execution": {
+    "model": "sonnet",
+    "max_turns": 10,
+    "timeout_seconds": 180,
+    "allowed_tools": [
+      "Agent",
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash"
+    ],
+    "append_system_prompt": "Use only supplied fixture facts. Do not inspect eval case files, graders or expected answers. Do not start a real board, PR, cloud job or Desktop story. Return the requested report in chat; do not write files unless the task explicitly requires it.",
+    "prompt": "Act as orchestrator. Invoke story-workflow:story-reader explicitly with model haiku and effort low. Its only command is: printf '%s\\n' '{\"id\":577,\"fields\":{\"System.WorkItemType\":\"User Story\",\"System.Title\":\"[L] Checkout redesign\",\"System.State\":\"New\",\"Microsoft.VSTS.Scheduling.StoryPoints\":34,\"System.Description\":\"<div>Customers pay in one step on mobile.</div>\",\"Microsoft.VSTS.Common.AcceptanceCriteria\":\"<div>A failed payment never empties the cart.</div>\"},\"relations\":[]}'\nNo child items exist. Return its digest as it gives it, without changing it or writing to a board."
+  },
+  "graders": [
+    {
+      "name": "outcome",
+      "type": "llm",
+      "criteria": "PASS only if the returned digest reports story points 34, keeps the title [L] Checkout redesign exactly, and keeps both the one-step mobile payment description and the complete failed-payment/cart acceptance criterion. FAIL if story points are missing, none or changed, the title loses [L], requirements are cut, child items are invented or anything is written to a board."
+    },
+    {
+      "name": "agent-used",
+      "type": "tool_used",
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"story-workflow:story-reader\"",
+      "arm": "with-only"
+    },
+    {
+      "name": "no-write",
+      "type": "tool_used",
+      "tool": "Write",
+      "min": 0,
+      "max": 0
+    },
+    {
+      "name": "requested-worker-settings",
+      "type": "tool_used",
+      "tool": "Agent",
+      "input_match": "(?=[\\s\\S]*\"subagent_type\"\\s*:\\s*\"story-workflow:story-reader\")(?=[\\s\\S]*\"model\"\\s*:\\s*\"haiku\")(?=[\\s\\S]*\"effort\"\\s*:\\s*\"low\")[\\s\\S]*",
+      "arm": "with-only"
+    }
+  ]
+}
