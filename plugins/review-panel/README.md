@@ -6,7 +6,7 @@ The plugin holds:
 
 - `/review-panel:review-panel`: one Codex adversarial review over a prepared scope, or the stance heads in deep mode.
 - `/review-panel:review-grok`: the same procedure with Grok (xAI Grok Build CLI) as the finder, for a reviewer without a Codex account or as a second model family.
-- The scripts: `prepare-scope.sh` (the exact scope and its manifest), `run-adversarial.sh`, `run-heads.sh`, `run-grok.sh`, `check-docket.sh` (proves every suggestion block replaces exactly its anchor) and `profile.sh`.
+- The scripts: `prepare-scope.sh` (the exact scope and its manifest, a reviewed tree for a head that is not checked out, and the base and head of an Azure Repos PR read from the PR itself), `run-adversarial.sh --default`, `run-heads.sh --deep`, `run-grok.sh --default|--deep`, `check-docket.sh` (requires the `checks:` line, proves every suggestion block replaces exactly its anchor, and writes `verdict.json` for a PR review) and `profile.sh`.
 - The head library: delivery, dependency, identity, reach, falsify, parity, situate, conform, daytwo, invariants and ux.
 
 ## Requirements
@@ -15,8 +15,8 @@ The plugin holds:
 - `git`, `python3` and `node` on PATH.
 - For Codex deep/plan review: codex-cli 0.167.0 and access to `gpt-6.1-sol`. Its exec flags were checked locally on 2026-11-08; runner tests use fake Codex, without a paid model call.
 - For default single-pass Codex review: codex-cli 0.153.4 or 0.167.0 and the Codex Claude Code plugin (`openai-codex`) companion 1.0.6. With 0.167.0 one codex binary runs both modes. The pins live in `skills/review-panel/scripts/pins.sh`.
-- For `/review-panel:review-grok`: the Grok Build CLI (`curl -fsSL https://x.ai/cli/install.sh | bash`, then `grok login`) at the version in `skills/review-grok/scripts/lib.sh` (1.0.46). Grok sends the reviewed code to xAI.
-- Optional: `gh` or `az repos` to list the open sibling pull requests in the scope.
+- For `/review-panel:review-grok`: the Grok Build CLI (`curl -fsSL https://x.ai/cli/install.sh | bash`, then `grok login`) at the version in `skills/review-grok/scripts/lib.sh` (1.0.46), and network access to `cli-chat-proxy.grok.com` (allow it in a sandboxed session). Grok sends the reviewed code to xAI. The runner turns Grok telemetry and the update check off.
+- Optional: `gh` or `az repos` to list the open sibling pull requests in the scope. On Azure Repos, `az` also reads a PR for `prepare-scope.sh --pr <n>`. Every `az` call passes `--org` (and `--project` where `az` takes it) from the profile or the `origin` URL, and ends after 20 s (`REVIEW_PANEL_AZ_TIMEOUT`) with a `WARN:` line.
 
 ## Install
 
@@ -123,6 +123,8 @@ Without a profile the panel reads CLAUDE.md and AGENTS.md for the repo rules, an
 | `name` | the repo folder name | the project name in every prompt |
 | `baseRef` | `origin/HEAD`, else `origin/main`, else `origin/master` | the base of a branch review, and the branch for the recent-commits list of Grok |
 | `prHost` | `auto` (from the `origin` URL) | `github`, `azure-repos` or `none`: how the scope lists open sibling pull requests |
+| `adoOrg` | the org of an Azure Repos `origin` URL | the Azure DevOps org URL, for example `https://dev.azure.com/example-org`, passed as `--org` to every `az` call |
+| `adoProject` | the project of an Azure Repos `origin` URL | the Azure DevOps project, for example `example-project`, passed as `--project` where `az` takes it |
 | `harnessPaths` | none | paths added to the review harness (the profile folder, `.claude/settings.json`, `CLAUDE.md`, `AGENTS.md`). A path that ends in `/` is a folder. A change to one sets `HARNESS_CHANGED` |
 | `deepHeads` | delivery, dependency, identity, parity, situate, reach, falsify | the heads of a deep review |
 | `planHeads` | delivery, conform, situate | the heads of a plan review |
@@ -149,7 +151,7 @@ python3 tests/configure-prs.test.py
 claude plugin validate .
 ```
 
-The matrix runs every guard against fixture repos with fake `codex`, `gh`, `az` and `grok` binaries. No model runs. It exits 0 when every case passes. Each guard has a case that fails without it.
+The matrix runs every guard against fixture repos with fake `codex`, `gh`, `az`, `curl` and `grok` binaries. No model runs and no network call is made. It takes about a minute: one case proves the 20 s bound on a hung `az` call. It exits 0 when every case passes. Each guard has a case that fails without it.
 
 ## Known limits
 

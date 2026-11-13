@@ -51,15 +51,41 @@ uncommitted_patch() {
     cd "${repo}" && git ls-files --others --exclude-standard "${UNC_SPEC[@]}" | while IFS= read -r f; do git diff --no-index -- /dev/null "${f}" || true; done )
 }
 
+# bounded <seconds> <out-file> <err-file> <command...>: runs the command in its own process group with
+# stdin closed and stdout and stderr in the two files, and kills the whole group after <seconds>.
+# Exit: the command's exit code, 124 on a timeout, 127 when it cannot start. A plain `$(az ...)`
+# cannot be bounded with `|| true`: a hung az (or a child it left behind) keeps the pipe open.
+bounded() {
+  python3 - "$@" <<'BOUNDED'
+import os, signal, subprocess, sys
+secs, out, err, argv = float(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4:]
+with open(out, "wb") as o, open(err, "wb") as e:
+    try:
+        p = subprocess.Popen(argv, stdout=o, stderr=e, stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        e.write(f"{exc}\n".encode()); sys.exit(127)
+    try:
+        sys.exit(p.wait(timeout=secs))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.wait(); sys.exit(124)
+BOUNDED
+}
+
 # check_scope_integrity <scope-dir> <repo>: manifest present and complete, diff.patch digest matches,
-# checkout at the scope head, scoped files clean in branch mode, working tree unchanged since
-# preparation in uncommitted mode. Sets MODE BASE_SHA HEAD_SHA PLAN PR HARNESS_CHANGED.
+# the reviewed checkout at the scope head (TREE when the scope has one, else the repo), scoped files
+# clean in that checkout in branch mode, working tree unchanged since preparation in uncommitted mode.
+# Sets MODE BASE_SHA HEAD_SHA PLAN PR PR_STATUS PR_DRAFT PR_TARGET TREE HARNESS_CHANGED, and
+# REVIEWED (the checkout the finders read: TREE, else the repo).
 check_scope_integrity() {
   local scope="$1" repo="$2" f want have dirty now
   for f in scope.env scope.md diff.patch files.txt facts.md; do
     [ -f "${scope}/${f}" ] || { echo "FAIL: ${scope}/${f} missing; run prepare-scope.sh again (a scope without its manifest is not reviewable)" >&2; return 1; }
   done
-  MODE="" REPO="" BASE_SHA="" HEAD_SHA="" PATCH_SHA256="" PLAN="" PR="" HARNESS_CHANGED=""
+  MODE="" REPO="" BASE_SHA="" HEAD_SHA="" PATCH_SHA256="" PLAN="" PR="" PR_STATUS="" PR_DRAFT="" PR_TARGET="" TREE="" HARNESS_CHANGED=""
   # shellcheck disable=SC1091
   . "${scope}/scope.env"
   [ -n "${MODE}" ] && [ -n "${HEAD_SHA}" ] && [ -n "${BASE_SHA}" ] && [ -n "${PATCH_SHA256}" ] \
@@ -67,13 +93,20 @@ check_scope_integrity() {
   [ "${REPO}" = "${repo}" ] || { echo "FAIL: scope was prepared in ${REPO}, this checkout is ${repo}" >&2; return 1; }
   want="${PATCH_SHA256}"; have="$(shasum -a 256 "${scope}/diff.patch" | cut -d' ' -f1)"
   [ "${want}" = "${have}" ] || { echo "FAIL: diff.patch digest ${have:0:12} != manifest ${want:0:12}; the scope was altered after preparation" >&2; return 1; }
-  [ "$(git -C "${repo}" rev-parse HEAD)" = "${HEAD_SHA}" ] \
-    || { echo "FAIL: checkout drifted: HEAD $(git -C "${repo}" rev-parse --short HEAD) != scope head ${HEAD_SHA:0:12}; re-run prepare-scope.sh or check out the scope head" >&2; return 1; }
+  REVIEWED="${repo}"
+  if [ -n "${TREE}" ]; then
+    # The head is not checked out in the repo: prepare-scope.sh added a detached worktree at
+    # HEAD_SHA, and the finders read that tree. The repo checkout may sit on any branch.
+    [ -d "${TREE}" ] || { echo "FAIL: the reviewed tree ${TREE} of this scope is gone; re-run prepare-scope.sh" >&2; return 1; }
+    REVIEWED="${TREE}"
+  fi
+  [ "$(git -C "${REVIEWED}" rev-parse HEAD)" = "${HEAD_SHA}" ] \
+    || { echo "FAIL: checkout drifted: HEAD $(git -C "${REVIEWED}" rev-parse --short HEAD) of ${REVIEWED} != scope head ${HEAD_SHA:0:12}; re-run prepare-scope.sh or check out the scope head" >&2; return 1; }
   if [ "${MODE}" = branch ]; then
     local scoped=()
     while IFS= read -r f; do [ -n "${f}" ] && scoped+=("${f}"); done < "${scope}/files.txt"
-    dirty="$(cd "${repo}" && git status --porcelain --untracked-files=no -- "${scoped[@]}" 2>/dev/null)"
-    [ -z "${dirty}" ] || { echo "FAIL: scoped files are modified in the worktree (branch mode reviews the committed tree):"$'\n'"${dirty}" >&2; return 1; }
+    dirty="$(cd "${REVIEWED}" && git status --porcelain --untracked-files=no -- "${scoped[@]}" 2>/dev/null)"
+    [ -z "${dirty}" ] || { echo "FAIL: scoped files are modified in the worktree ${REVIEWED} (branch mode reviews the committed tree):"$'\n'"${dirty}" >&2; return 1; }
   fi
   if [ "${MODE}" = uncommitted ]; then
     now="$(uncommitted_patch "${repo}" "${scope}" | shasum -a 256 | cut -d' ' -f1)"
@@ -82,4 +115,11 @@ check_scope_integrity() {
   [ "${HARNESS_CHANGED}" = 1 ] \
     && echo "WARN: the candidate changes the review harness; the prompts and runners come from this checkout, read those hunks first" >&2
   return 0
+}
+
+# write_finder_env <scope-dir> <finder> <version> <depth> <turns>: records the finder run in
+# <scope>/finder.env (shell-quoted KEY=value lines). check-docket.sh --scope copies it into
+# verdict.json, so the record of a PR review names what found, at which depth, in how many turns.
+write_finder_env() {
+  { printf 'FINDER=%q\n' "$2"; printf 'FINDER_VERSION=%q\n' "$3"; printf 'DEPTH=%q\n' "$4"; printf 'TURNS=%q\n' "$5"; } > "$1/finder.env"
 }

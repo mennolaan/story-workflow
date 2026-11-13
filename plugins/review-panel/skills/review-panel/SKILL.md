@@ -38,7 +38,9 @@ compliance-critical surfaces). Examples:
 - `/review-panel`: current repo, branch vs the base ref of the profile.
 - `/review-panel uncommitted work`: working tree vs HEAD.
 - `/review-panel PR 84`: the branch of pull request 84 against its target
-  branch; the number is recorded in the scope for context.
+  branch; the number is recorded in the scope for context. On Azure Repos,
+  `prepare-scope.sh --pr 84` without refs reads base, head and status from
+  the PR itself; elsewhere pass its base and head refs.
 - `/review-panel deep`: the stance-head variant.
 - `/review-panel plan .plans/<slug>.md`: design review of a plan file
   (`prepare-scope.sh --plan`, then `run-heads.sh`, which runs the plan heads).
@@ -50,7 +52,10 @@ invocation does not say `deep`, do not assume default: step 3 asks the user.
 **The panel reads no pull request threads.** The finders must never see them:
 prior feedback anchors a finder. When the subject is an open pull request, ask
 the user for the existing threads, or read them with the CLI of the PR host
-(`gh pr view <n> --comments` on GitHub), and hand them to the judge in step 6.
+(`gh pr view <n> --comments` on GitHub; on Azure Repos `az repos pr show
+--id <n> --org <adoOrg>` for the PR and the `pullRequestThreads` resource of
+`az devops invoke --org <adoOrg>` for its threads), and hand them to the judge
+in step 6.
 
 ## The review profile
 
@@ -61,7 +66,7 @@ prompts and reads CLAUDE.md and AGENTS.md for the repo rules.
 
 | File | Read by | Holds |
 |---|---|---|
-| `profile.json` | the scripts | `name`, `baseRef` (for example `origin/development`), `prHost` (`auto`, `github`, `azure-repos`, `none`), `harnessPaths` (added to the defaults), `deepHeads`, `planHeads` |
+| `profile.json` | the scripts | `name`, `baseRef` (for example `origin/development`), `prHost` (`auto`, `github`, `azure-repos`, `none`), `adoOrg` and `adoProject` (Azure DevOps org URL and project; default from an Azure Repos `origin` URL), `harnessPaths` (added to the defaults), `deepHeads`, `planHeads` |
 | `context.md` | every finder | the project rules: invariants, locked decisions, what not to flag in this repo, who sees a defect |
 | `judge.md` | the judge (you) | the checks that must be green, the severity order, where PR threads live, where declined findings are answered |
 | `heads/<head>.md` | that head | project detail appended to the generic head, or a head of its own |
@@ -106,16 +111,33 @@ without the output that says it passed.
    stop. When the reviewer has no Codex account, `/review-grok` runs this same
    procedure with Grok as the finder. Working tree committed, and the checks
    for what changed are green: the checks that `judge.md` names, else the
-   verification commands of the repo's CLAUDE.md or README. Refresh the base:
-   `git fetch origin` and use the base ref of the profile rather than a stale
-   local branch.
+   verification commands of the repo's CLAUDE.md or README. In a PR review,
+   run them at the reviewed head (the `TREE` of the scope, step 2) rather
+   than trusting the PR description. When a check cannot run here, say so:
+   the docket then carries `checks: author claim, not verified in this
+   review`. Refresh the base: `git fetch origin` and use the base ref of the
+   profile rather than a stale local branch.
 2. **Scope and fact sheet (once).**
    `scripts/prepare-scope.sh <base> <head> [--pr n]` (or `--uncommitted`, or
    `--plan <path>` for a design review; ignored files allowed) writes
    `.claude/.review/<label>/{scope.md,scope.env,diff.patch,files.txt,facts.md,heads/}`.
    `.claude/.review/` must be gitignored; the script warns when it is not.
    `scope.env` is the manifest (mode, base and head SHAs, patch digest): the
-   runners take their target from it and refuse a drifted checkout. When the
+   runners take their target from it and refuse a drifted checkout.
+   A head that is not checked out (a PR, another branch) gets a detached
+   worktree at the head under `$TMPDIR`, recorded as `TREE` in `scope.env`:
+   the finders read that tree, so the checkout may stay on its own branch
+   with unrelated edits. Remove it after the docket with
+   `scripts/prepare-scope.sh --cleanup <scope-dir>`.
+   For a pull request on Azure Repos, `prepare-scope.sh --pr <n>` without
+   refs reads the PR (`az repos pr show`): head is `lastMergeSourceCommit`,
+   base is `lastMergeTargetCommit` for a completed PR, else the merge base of
+   `origin/<target>` and the head. `PR_STATUS`, `PR_DRAFT` and `PR_TARGET`
+   land in `scope.env` and `scope.md`. On `WARN: post-merge review` (a
+   completed or abandoned PR), tell the user that the findings become
+   follow-ups, not fixes, and ask before launching the finder. Every `az`
+   call carries `--org` from the profile and is bounded to 20 s; a `WARN:`
+   line with the cause goes into the narration. When the
    candidate changes the review harness itself (the review profile,
    `.claude/settings.json`, CLAUDE.md, AGENTS.md, or a `harnessPaths` entry)
    the scope says so (`HARNESS_CHANGED=1`): read those hunks first; the
@@ -141,9 +163,11 @@ without the output that says it passed.
    every head's findings. A small, well-covered change argues for default; a
    thin review history on a security, personal-data or cost surface argues
    for deep. Do not launch until the user has chosen, unless the invocation
-   already said which.
+   already said which. The runner flag comes from that answer: `--default`
+   or `--deep`. The runners exit 2 without one, so a depth is never picked
+   for the user. A plan review has no depth choice and needs no flag.
 4. **Find (Codex, background).** Default:
-   `scripts/run-adversarial.sh <scope-dir>` (verifies the manifest: diff
+   `scripts/run-adversarial.sh <scope-dir> --default` (verifies the manifest: diff
    digest, checkout at the scope head, scoped files clean in branch mode,
    working tree unchanged since preparation in uncommitted mode; target from
    `scope.env`, `--base` only in branch mode because the engine lets `--base`
@@ -153,7 +177,7 @@ without the output that says it passed.
    companion and codex versions and the target the engine reports, prints
    verdict and finding count, refuses an engine target that does not match
    the manifest, fails loud). Deep, and every plan review:
-   `scripts/run-heads.sh <scope-dir> [--heads a,b,c]` (heads from `heads/*.md`
+   `scripts/run-heads.sh <scope-dir> --deep [--heads a,b,c]` (heads from `heads/*.md`
    plus the profile heads, behind `heads/_preamble.md`, parallel,
    `heads/<head>.out.md` plus `status.tsv`; the default set is `deepHeads`,
    or `planHeads` for a plan scope; a plan file is not a git target for the
@@ -189,7 +213,12 @@ without the output that says it passed.
 
    Only findings left after the cross-off go forward. With no threads
    supplied, say so in the narration rather than implying the change had no
-   prior review.
+   prior review. An empty thread list counts only when the same reader also
+   returned the PR itself. Otherwise the threads are unknown. Say so in the
+   narration. On Azure Repos the reader is `az repos pr show --id <n> --org
+   <adoOrg>` (an MCP server that returns `[]` for the threads and "not found"
+   for the repo has not read the PR). The docket states the reader and the
+   thread count.
 7. **Judge (main thread).** Union and dedup the findings by file/line and
    claim overlap; discard the engine's severity and verdict at the door. For
    each finding, presume it false and try to kill it against the repo at the
@@ -229,9 +258,28 @@ without the output that says it passed.
 ## Presentation (the panel always ends here)
 
 The docket, for the user to eyeball; nothing is implemented until the user
-says so. Brief, curt, simple English. One line per finding: severity,
-file:line, what is wrong, why it matters, the proposed fix. Grouped: fix now,
-decision for you, refuted by the judge (count).
+says so. Brief, curt, simple English. It opens with these lines:
+
+```text
+checks: <the checks that ran for this review, at which head, with their result>
+threads: <reader>, <n> threads (or: unknown, <why>)
+finder: <finder, version, depth, turns>; <every WARN line of the runner, verbatim>
+verdict: <approved | approved with comments | author decides | fix before merge>
+findings: <N> raised, <M> survived
+```
+
+`checks:` is mandatory. When no check could run in this review, it reads
+`checks: author claim, not verified in this review`. Copy every runner
+`WARN:` line (a thin sample, a failed sibling lookup, a post-merge review)
+into `finder:`. Then one line per finding: severity, file:line, what is
+wrong, why it matters, the proposed fix. Grouped: fix now, decision for you,
+refuted by the judge (count). Run `scripts/check-docket.sh <docket.md>
+<head>` on every docket; it fails without the `checks:` line. For a pull
+request, add `--scope <scope-dir>`: it also needs `verdict:` and `findings:`
+and writes `<scope-dir>/verdict.json`, the record of the PR review (PR id and
+status, head and tree, depth, finder, version and turns, counts, verdict,
+date). After the docket, `scripts/prepare-scope.sh --cleanup <scope-dir>`
+removes the reviewed tree.
 
 When prior threads were supplied, close with **Previously raised, standing as
 declined (N)**: the step 6 footnote, one line each, the thread reference and
@@ -242,7 +290,9 @@ A clean result states what it is and never implies more. Not "nothing to
 change", but: this run found nothing it would defend. One run is one sample:
 re-runs return different findings at similar counts, so a quiet panel means
 the change survived this sample, not that it is correct. The held-out check
-decides that.
+decides that. A clean PR review posts no comment, unless the user asks for a
+summary comment. (`/review-panel:configure-prs` keeps its own rule: its
+summary marks the reviewed commit.)
 
 Every item carries an explicit polarity: **Blocking**, **Should fix**,
 **Nit**, or **FYI**. An unlabelled item reads as mandatory; label all of
@@ -314,7 +364,9 @@ only into a file.
   Any later commit invalidates it (tree-bound); re-emit after the tree
   changes. In uncommitted mode `HEAD^{tree}` is the base tree, not the
   reviewed work: write `{"verdict":"deferred"}` and re-emit with the real
-  tree hash once the work is committed.
+  tree hash once the work is committed. For a pull request the checkout's
+  tree is the wrong tree: the record is `<scope-dir>/verdict.json` from
+  `check-docket.sh --scope`, and `.last-review.json` is not written.
 - The panel is a pre-filter, never the last arbiter. The held-out check (the
   test suites, an evaluation run for a prompt change, the first pipeline run)
   decides whether the thing works; a green panel proves review coverage, not
@@ -359,17 +411,22 @@ anywhere in the repo and reports only against the scope file list.
 ## Held-out checks of the harness
 
 `${CLAUDE_PLUGIN_ROOT}/tests/review-panel-matrix.sh` exercises the guards
-against fixture repos, with fake `codex` and `grok` binaries. The guards that
-must keep working: `prepare-scope.sh` creating a scope for branch, uncommitted
-and plan subjects; `check_scope_integrity` refusing a missing manifest, a
-tampered diff, a drifted checkout, dirty scoped files and a working tree that
-changed after an uncommitted scope was prepared; `run-adversarial.sh`
-refusing a plan scope, an unpinned codex or companion version and a
-mismatching engine target; the `HARNESS_CHANGED` flag; the profile loader
-refusing an unknown key and a bad `prHost`; and `check-docket.sh` accepting an
+against fixture repos, with fake `codex`, `az`, `curl` and `grok` binaries.
+The guards that must keep working: `prepare-scope.sh` creating a scope for
+branch, uncommitted, plan and Azure Repos PR subjects (a completed PR takes
+`lastMergeTargetCommit` and warns), a reviewed tree for a head that is not
+checked out and `--cleanup` removing it, every `az` call carrying `--org` and
+ending within the 20 s bound with a `WARN:` line; `check_scope_integrity`
+refusing a missing manifest, a tampered diff, a drifted checkout, dirty
+scoped files (in the reviewed tree too) and a working tree that changed after
+an uncommitted scope was prepared; every runner refusing to run without a
+depth flag; `run-adversarial.sh` refusing a plan scope, an unpinned codex or
+companion version and a mismatching engine target; the `HARNESS_CHANGED`
+flag; the profile loader refusing an unknown key and a bad `prHost`; and
+`check-docket.sh` refusing a docket without a `checks:` line, accepting an
 exact anchor while refusing an out-of-range anchor, a block without an anchor
-line and a list-indented block. A change to a guard is proven by a case that
-fails without it.
+line and a list-indented block, and writing `verdict.json` for a PR scope. A
+change to a guard is proven by a case that fails without it.
 
 ## Cost and caps
 
