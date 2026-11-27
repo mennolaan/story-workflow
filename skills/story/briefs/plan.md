@@ -34,7 +34,7 @@ One phase per turn, in this order. One board task per phase.
    - End the turn with recap first line `PLAN READY {{PLANS}}/{{SLUG}}.md`.
 
 ## Claims table
-The orchestrator runs the independence test on this table at the plan gate, and tasks in independent tracks can run in parallel sessions (`{{PLUGIN}}/skills/story/SKILL.md`, "Parallel tracks").
+The orchestrator runs the independence test on this table at the plan gate, and tasks in independent tracks can run in parallel sessions (`{{PLUGIN}}/skills/story/parallel.md`).
 
 ```
 | Task | Wave | Depends | Files | Track |

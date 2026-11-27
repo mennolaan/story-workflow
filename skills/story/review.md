@@ -37,8 +37,21 @@ it still needs captured checks. Foundation and integrated reviews remain require
 After any scope decisions are incorporated at the plan gate, the orchestrator runs:
 
 ```bash
-"<plugin>/hooks/story-review.sh" freeze <slug> "<plans>/<slug>.d/acceptance.json" --require-traceability
+"<plugin>/hooks/story-review.sh" freeze <slug> "<plans>/<slug>.d/acceptance.json" --require-traceability --base <REVIEW_BASE_SHA>
 ```
+
+`--base` pins the immutable original base of the story. Foundation, integrated
+and PR reviews must use exactly that sha. A track uses the story base when the
+plan has no foundation tasks. With foundation tasks, the orchestrator pins each
+track's base after the foundation gate returns `REVIEW OK`:
+
+```bash
+"<plugin>/hooks/story-review.sh" pin <slug> track-A <foundation sha>
+```
+
+A `run`, `gate` or `trace` with any other base is refused, so an empty or
+shortened diff cannot pass review. A re-freeze with a new base (for example after
+a rebase onto a moved base branch) keeps only track pins that descend from it.
 
 This validates coverage against the safe claims groups, refuses a handoff
 criterion whose tasks sit in two safe groups (make it an integration criterion
@@ -118,11 +131,38 @@ the stored command; the command itself runs unredacted. Output is not redacted,
 and the reviewer can read the check logs: a check must not print secrets.
 
 The recorder saves command, exit code, elapsed time, output, contract hash, HEAD
-and tree. Failed/timed-out checks are recorded as failures. Newer evidence for a
-criterion replaces older evidence at the same revision, allowing recovery from
-an environment failure. Repeated failures of the same command on unchanged code
+and tree. Failed/timed-out checks are recorded as failures. At one revision, a rerun of
+the same command replaces its earlier result, allowing recovery from an
+environment failure. A different command never replaces it: every command
+recorded for a scoped criterion at the current revision must pass. A wrong
+command that can never pass is cleared only by a new commit. Repeated failures of the same command on unchanged code
 stop after `handoffReview.maxCheckFailures` (default 2): return `BLOCKED` with the
 evidence and ask the orchestrator to resolve the cause, rather than retrying.
+
+## Change risk (CRAP)
+
+Optional, per repo. With `"risk": {"crap": {"mode": "advisory", "threshold": 30}}`
+in `.claude/story.json`, every `run`, `gate` and `trace` needs a CRAP report of the
+current revision. CRAP = CC² × (1 − coverage)³ + CC per changed function:
+complex code with little test coverage scores high. Run the scope's tests with
+coverage (LCOV or Cobertura), then record the report:
+
+```bash
+"<plugin>/hooks/story-review.sh" risk <slug> track-A <base-sha> coverage/lcov.info [--complexity lizard.csv]
+```
+
+The recorder runs `hooks/crap.py` itself against the pinned base and the clean
+HEAD, and saves the report with its hash. Python is measured with the standard
+library; other languages need a `lizard --csv` file, or their files are listed
+as unmeasured. A function in a file no coverage report mentions scores with
+coverage 0. The report enters the review identity, and the finder gets the
+functions over the threshold to read closely. A score is a reason to look, never
+a finding by itself.
+
+`advisory` (the start) only points the finder. `block` refuses `gate`, and
+`CHECKS ONLY`, while a changed function is over the threshold: add tests for its
+decisions or simplify it. Switch a repo to `block` only after its advisory
+reports have matched findings the judge upheld. A new commit needs a new report.
 
 ## Review, judge, gate
 

@@ -46,6 +46,9 @@ Read `{{PLUGIN}}/skills/story/review.md`. The original review base is
 After the final foundation commit, capture its criterion checks and run/gate
 `foundation` with the exact foundation task ids before reporting its final
 `PHASE DONE`. Dependent tracks must not consume an unreviewed foundation.
+When `.claude/story.json` has `risk.crap`, run the tests of each scope with
+coverage and record `story-review.sh risk` (review.md, "Change risk") before its
+run/gate; repeat after every fix commit.
 After integration (or sequential implementation), capture fresh checks for all
 criteria, including runtime wiring/end-to-end scenarios, then run/gate
 `integrated all {{REVIEW_BASE_SHA}}` before the docket. Record the receipt and
@@ -61,7 +64,7 @@ legacy contracts or missing requirement/docs coverage to the orchestrator.
 This derivation makes no extra model call and does not replace real scenarios.
 
 ## Parallel mode
-Only when the orchestrator runs the story in parallel tracks (`{{PLUGIN}}/skills/story/SKILL.md`, "Parallel tracks"). You are then the story-branch session. Track sessions run the track tasks on their own local branches at the same time.
+Only when the orchestrator runs the story in parallel tracks (`{{PLUGIN}}/skills/story/parallel.md`). You are then the story-branch session. Track sessions run the track tasks on their own local branches at the same time.
 - You own `{{BRANCH}}`, every shared file and `## Implementation status`. A track never writes them.
 - Your phases are the foundation tasks, then `#{{STORY_ID}} Merge the tracks`, then the integrate tasks, then the review.
 - Without foundation tasks, your first turn only does the first steps above, and ends with recap first line `PHASE DONE #{{STORY_ID}} -`. Then wait for `next: #{{STORY_ID}} merge`.

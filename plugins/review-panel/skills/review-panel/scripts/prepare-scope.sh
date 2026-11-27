@@ -8,6 +8,9 @@
 #        prepare-scope.sh --uncommitted [--out <dir>]   (working tree vs HEAD, untracked included)
 #        prepare-scope.sh --plan <path> [--out <dir>]   (design review of one plan file, ignored files allowed)
 #        prepare-scope.sh --cleanup <scope-dir>         (remove the reviewed tree of a scope, after the docket)
+#        add --coverage <lcov|cobertura> (repeatable) [--complexity <lizard.csv>] to a branch
+#        or PR scope: facts.md gets the CRAP of every changed function (scripts/crap.py).
+#        The coverage must come from the reviewed head (a CI artifact for a PR); never run PR code.
 # Also writes scope.env (MODE, BASE_SHA, HEAD_SHA, REPO, PATCH_SHA256): the
 # runners derive their target from it and refuse a drifted checkout.
 # A head that is not checked out (a PR, another branch) gets a detached worktree
@@ -35,7 +38,8 @@ cd "${repo}"
 # shellcheck disable=SC1091
 . "${here}/profile.sh"
 load_profile "${repo}" || exit 1
-base="" head="" pr="" out="" uncommitted=0 plan="" cleanup=""
+base="" head="" pr="" out="" uncommitted=0 plan="" cleanup="" complexity=""
+coverage=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --pr) pr="$2"; shift 2 ;;
@@ -43,7 +47,9 @@ while [ $# -gt 0 ]; do
     --uncommitted) uncommitted=1; shift ;;
     --plan) plan="$2"; shift 2 ;;
     --cleanup) cleanup="$2"; shift 2 ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    --coverage) coverage+=("--coverage" "$2"); shift 2 ;;
+    --complexity) complexity="$2"; shift 2 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) if [ -z "${base}" ]; then base="$1"; elif [ -z "${head}" ]; then head="$1"; else echo "unexpected argument: $1" >&2; exit 2; fi; shift ;;
   esac
 done
@@ -326,6 +332,26 @@ PY
   echo "## Fact-sheet gaps (finders append a line when a load-bearing claim has no fact here; the arbiter resolves)"
   echo
 } > "${out}/facts.md"
+
+# Change risk: the CRAP of each changed function, from a coverage report of the reviewed head.
+if [ "${#coverage[@]}" -gt 0 ]; then
+  if [ "${mode}" != branch ]; then
+    echo "WARN: --coverage applies to a branch or PR scope; this ${mode} scope gets no CRAP section" >&2
+  else
+    crap_args=(--base "${merge_base}" --head "${head_sha}" "${coverage[@]}" --format markdown)
+    [ -z "${complexity}" ] || crap_args+=(--complexity "${complexity}")
+    if crap_md="$(python3 "${here}/crap.py" "${crap_args[@]}" 2>&1)"; then
+      {
+        echo "## Change risk (CRAP, computed by scripts/crap.py; a pointer to read closely, not a finding)"
+        echo
+        printf '%s\n' "${crap_md}"
+        echo
+      } >> "${out}/facts.md"
+    else
+      echo "WARN: crap.py failed, the scope continues without a CRAP section: ${crap_md}" >&2
+    fi
+  fi
+fi
 
 hits="$(harness_hits "${out}/files.txt")"
 if [ -n "${hits}" ]; then

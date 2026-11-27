@@ -153,6 +153,26 @@ claude plugin validate .
 
 The matrix runs every guard against fixture repos with fake `codex`, `gh`, `az`, `curl` and `grok` binaries. No model runs and no network call is made. It takes about a minute: one case proves the 20 s bound on a hung `az` call. It exits 0 when every case passes. Each guard has a case that fails without it.
 
+### Held-out checks of the harness
+
+`${CLAUDE_PLUGIN_ROOT}/tests/review-panel-matrix.sh` exercises the guards
+against fixture repos, with fake `codex`, `az`, `curl` and `grok` binaries.
+The guards that must keep working: `prepare-scope.sh` creating a scope for
+branch, uncommitted, plan and Azure Repos PR subjects (a completed PR takes
+`lastMergeTargetCommit` and warns), a reviewed tree for a head that is not
+checked out and `--cleanup` removing it, every `az` call carrying `--org` and
+ending within the 20 s bound with a `WARN:` line; `check_scope_integrity`
+refusing a missing manifest, a tampered diff, a drifted checkout, dirty
+scoped files (in the reviewed tree too) and a working tree that changed after
+an uncommitted scope was prepared; every runner refusing to run without a
+depth flag; `run-adversarial.sh` refusing a plan scope, an unpinned codex or
+companion version and a mismatching engine target; the `HARNESS_CHANGED`
+flag; the profile loader refusing an unknown key and a bad `prHost`; and
+`check-docket.sh` refusing a docket without a `checks:` line, accepting an
+exact anchor while refusing an out-of-range anchor, a block without an anchor
+line and a list-indented block, and writing `verdict.json` for a PR scope. A
+change to a guard is proven by a case that fails without it.
+
 ## Known limits
 
 - The pins are strict. A Codex, companion or Grok update stops the panel until the pin is re-verified and bumped. `REVIEW_PANEL_ALLOW_UNPINNED=1` or `REVIEW_GROK_ALLOW_UNPINNED=1` allows one run with a warning.

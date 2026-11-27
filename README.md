@@ -273,6 +273,11 @@ evidence tied to the exact review hash; acceptance gaps cannot be dismissed.
 | `timeoutSeconds` | 600 | Wall-time bound for each recorded check or Codex run. Timeout stops the subprocess group and never becomes a pass. |
 | `maxCheckFailures` | 2 | Repeated failures of the same command on unchanged code stop before another retry; the orchestrator resolves the operational block. |
 
+| Setting under `risk.crap` | Default | Meaning |
+|---|---|---|
+| `mode` | off (no `risk` block) | `advisory`: each review needs a CRAP report of the revision (`story-review.sh risk`), and the finder reads the functions over the threshold closely. `block`: `gate` also refuses while a changed function is over it. See `skills/story/review.md`, "Change risk". |
+| `threshold` | 30 | The classic CRAP threshold. At complexity 30 no coverage brings a function under it. |
+
 Follow-up finders focus on the fix delta and previous findings. Exact successful
 results are reused only when revision, base, contract, evidence and requested
 review settings match. Missing/failed/malformed reviews remain unavailable, not
@@ -310,6 +315,16 @@ tests/story-routing-matrix.sh
 ```bash
 python3 tests/story-review.test.py
 ```
+
+```bash
+python3 tests/crap.test.py
+```
+
+```bash
+tests/crap-dogfood.sh
+```
+
+`crap-dogfood.sh` runs the Python suites of this repo under a standard-library line tracer (`tests/linecov/`) and prints the CRAP of every function. It shows the score on real code with real coverage. It is not a pass/fail gate.
 
 ```bash
 claude plugin validate .

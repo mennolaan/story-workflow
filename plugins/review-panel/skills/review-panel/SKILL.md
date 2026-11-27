@@ -129,6 +129,11 @@ without the output that says it passed.
    the finders read that tree, so the checkout may stay on its own branch
    with unrelated edits. Remove it after the docket with
    `scripts/prepare-scope.sh --cleanup <scope-dir>`.
+   When a coverage report of the reviewed head exists (LCOV or Cobertura,
+   from the local test run or a CI artifact of a PR; never run PR code for
+   it), pass `--coverage <file>` (repeatable, plus `--complexity <lizard.csv>`
+   for non-Python code). facts.md then lists the CRAP of each changed
+   function, and every head reads the functions over 30 closely.
    For a pull request on Azure Repos, `prepare-scope.sh --pr <n>` without
    refs reads the PR (`az repos pr show`): head is `lastMergeSourceCommit`,
    base is `lastMergeTargetCommit` for a completed PR, else the merge base of
@@ -374,59 +379,9 @@ only into a file.
 
 ## Head library (deep mode)
 
-`heads/_focus.md` is the default review focus (the delivery, dependency,
-identity, conformance and situate stances in one Codex review; the absence
-class enters default mode only through the scope exception, so parity
-coverage needs deep). `heads/*.md` are the stance heads for deep mode,
-rendered behind `heads/_preamble.md` by `run-heads.sh`: attack `delivery`,
-`dependency`, `identity` (identity, redaction and gates), `reach` (who can
-start the code and what it holds while it runs), `falsify` (for each check,
-the mutation it still passes); absence `parity` (names the sibling that sets
-the precedent); situate `situate` (names its source); conform `conform`
-(cites its authority, no failure scenario); library-only `daytwo` (rotation,
-re-run, purge), `invariants` (the project invariants of the profile context
-and the couplings around them) and `ux` (the page, the PDF and the deck
-against the story's design boards: missing states, copy that differs in
-meaning, numbers and legends shown differently, controls a keyboard or
-screen-reader user cannot reach). The deep default is delivery, dependency,
-identity, parity, situate, reach, falsify (`deepHeads` changes it); conform,
-daytwo, invariants and ux are selected explicitly: conform in every plan
-review, where there is no code to compare against a sibling; daytwo when the
-diff carries rotation, re-run or purge procedures; invariants when the change
-touches an invariant the profile context names; ux when the story attaches a
-design and the diff renders it, after the orchestrator unpacks the boards into
-the scratchpad and lists their paths in `facts.md` under "UI reference
-material" (a head reads no zip, so the unpacking happens before the run).
-A profile head file `heads/<head>.md` is appended to the generic head of that
-name as project detail (the sibling folders to read, the store that counts as
-durable), or is a head of its own when the plugin has none.
-A new head is admitted only when external review or an escaped defect shows
-a class no existing stance covers. `ux` was admitted that way: in three
-panels on one story it raised three design departures that no attack or
-absence head raised.
-Edit the prompt file, never the rendered copy in the scope dir. The
-preamble behind every head separates reading from reporting: a head reads
-anywhere in the repo and reports only against the scope file list.
+In deep mode and for a plan review, read `head-library.md` beside this file before choosing heads: it lists every stance head, the deep default (delivery, dependency, identity, parity, situate, reach, falsify), when conform, daytwo, invariants and ux are selected, and the rule that admits a new head.
 
-## Held-out checks of the harness
-
-`${CLAUDE_PLUGIN_ROOT}/tests/review-panel-matrix.sh` exercises the guards
-against fixture repos, with fake `codex`, `az`, `curl` and `grok` binaries.
-The guards that must keep working: `prepare-scope.sh` creating a scope for
-branch, uncommitted, plan and Azure Repos PR subjects (a completed PR takes
-`lastMergeTargetCommit` and warns), a reviewed tree for a head that is not
-checked out and `--cleanup` removing it, every `az` call carrying `--org` and
-ending within the 20 s bound with a `WARN:` line; `check_scope_integrity`
-refusing a missing manifest, a tampered diff, a drifted checkout, dirty
-scoped files (in the reviewed tree too) and a working tree that changed after
-an uncommitted scope was prepared; every runner refusing to run without a
-depth flag; `run-adversarial.sh` refusing a plan scope, an unpinned codex or
-companion version and a mismatching engine target; the `HARNESS_CHANGED`
-flag; the profile loader refusing an unknown key and a bad `prHost`; and
-`check-docket.sh` refusing a docket without a `checks:` line, accepting an
-exact anchor while refusing an out-of-range anchor, a block without an anchor
-line and a list-indented block, and writing `verdict.json` for a PR scope. A
-change to a guard is proven by a case that fails without it.
+The held-out checks of this harness are listed in the plugin README ("Check it").
 
 ## Cost and caps
 

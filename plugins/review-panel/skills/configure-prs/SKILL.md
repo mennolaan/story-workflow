@@ -1,6 +1,6 @@
 ---
 name: configure-prs
-description: Set up and start automatic reviews of your teammates' Azure DevOps pull requests, from a session in any repo. Asks for the Azure DevOps project URL, saves it for this machine and starts polling at once. A no-model poller checks every 30 minutes on weekdays and wakes this session only when a PR that is not yours, not a draft and not from a pipeline has commits it has not reviewed; a script then runs a deep review-panel review (9 Codex heads) and a headless Claude judge (Opus 5.5, medium effort, 500k context cap) that posts the comments on the PR. Run it again in a new session to resume with the saved config. Use when the user runs /review-panel:configure-prs or wants teammates' PRs reviewed automatically.
+description: Set up and start automatic reviews of your teammates' Azure DevOps pull requests, from a session in any repo. Asks for the Azure DevOps project URL, saves it for this machine and starts a no-model poller that wakes this session only when a teammate's PR has unreviewed commits; each such PR gets a deep review-panel review and a headless judge that posts the comments. Run it again in a new session to resume with the saved config. Use when the user runs /review-panel:configure-prs or wants teammates' PRs reviewed automatically.
 argument-hint: "[<Azure DevOps project or repo URL> ...]"
 effort: high
 ---

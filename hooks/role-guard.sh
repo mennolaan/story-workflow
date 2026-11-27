@@ -87,8 +87,11 @@ if ! command -v jq >/dev/null 2>&1; then
     printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"role-guard: jq is not on PATH, so the guard cannot check a command of this bound child session, and denies it. Install jq (brew install jq)."}}'
     exit 0
   fi
+  # Not a child: the call may run, with a visible warning. Exit 0, because
+  # hooks.json sets onFailure block and any other exit would block it.
   echo "role-guard: jq is not on PATH, so the guard did not run. Install it (brew install jq)." >&2
-  exit 1
+  printf '%s\n' '{"systemMessage":"role-guard: jq is not on PATH, so the guard did not run. Install it (brew install jq)."}'
+  exit 0
 fi
 jq -e . >/dev/null 2>&1 <<<"${input}" || { echo "role-guard: the hook input is not JSON, so the guard did not run. Input: ${input:0:200}" >&2; exit 1; }
 
