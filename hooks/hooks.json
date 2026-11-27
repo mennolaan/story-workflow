@@ -15,7 +15,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\"",
+            "onFailure": "block"
           }
         ]
       },
@@ -24,7 +25,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/board-read-guard.sh\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/board-read-guard.sh\"",
+            "onFailure": "block"
           }
         ]
       }

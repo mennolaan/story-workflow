@@ -20,7 +20,8 @@ absolute path, in double quotes, from the repo under review.
 
 Read `${CLAUDE_PLUGIN_ROOT}/skills/review-panel/SKILL.md` and follow it step
 by step: When, Input, the review profile, Narration, the procedure,
-Presentation, After the panel, and the head library. This skill changes only
+Presentation, After the panel, and the head library (`head-library.md` beside it,
+in deep mode). This skill changes only
 the finder. It uses the review-panel scripts, profile and head prompts
 unchanged: `prepare-scope.sh` builds the scope, `check_scope_integrity`
 guards it, `check-docket.sh` checks the docket, and `heads/*.md` with

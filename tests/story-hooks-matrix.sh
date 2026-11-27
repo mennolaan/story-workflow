@@ -606,7 +606,7 @@ placeholders_missing() { # placeholders_missing <map file> <file>...: prints eac
   local map="$1"; shift
   grep -ho '{{[A-Z_]*}}' "$@" | sort -u | while IFS= read -r x; do grep -qF "\`${x}\`" "${map}" || printf 'undocumented %s\n' "${x}"; done
 }
-o="$(placeholders_missing "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md")"
+o="$(placeholders_missing "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/parallel.md")"
 [ -z "${o}" ] && pass "placeholders: every placeholder of the briefs and the ledger is documented in /story" || fail "placeholders: undocumented" "${o}"
 printf 'Run {{REVIEW_NOPE}}.\n' >"${tmp}/nope.md"
 [ -n "$(placeholders_missing "${story}/SKILL.md" "${tmp}/nope.md")" ] && pass "placeholders: an undocumented placeholder fails" || fail "placeholders: an undocumented placeholder passed"
@@ -629,7 +629,7 @@ for f in "${story}"/briefs/*.md; do
     || fail "conventions: $(basename "${f}") names CLAUDE.md or lacks {{CONVENTIONS}}"
 done
 repo_facts() { grep -n -i -E 'tme-lean|dev\.azure\.com|origin/development|az repos pr create|eiffel|/review-panel|/review-grok|feature/<id>' "$@"; }
-o="$(repo_facts "${story}/SKILL.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/story.example.json" "${repo}/skills/checkpoint/SKILL.md" \
+o="$(repo_facts "${story}/SKILL.md" "${story}/parallel.md" "${story}/context.md" "${story}/guards.md" "${story}"/briefs/*.md "${story}/ledger.md" "${story}/story.example.json" "${repo}/skills/checkpoint/SKILL.md" \
   "${hooks}"/*.sh "${hooks}/register.tsx" "${hooks}/hooks.json" "${repo}/tests/context-keeper.test.ts" "${repo}/.claude-plugin/plugin.json" "${repo}"/agents/*.md)"
 [ -z "${o}" ] && pass "repo facts: no skill, brief, example config, hook, mod or mod test names the facts of one repo" || fail "repo facts: found" "${o}"
 jq -e '(.review | not) and (.board.show | type == "string") and (.pr.create | type == "string") and (.baseBranch | type == "string") and (.branch | type == "string") and (.backstopTokens | type == "number") and (.guard.deny | type == "array")' \
@@ -686,8 +686,8 @@ for c in "git push" "ls"; do
     && pass "role-guard: without jq a bound child is denied ${c} (fail closed)" || fail "role-guard: without jq a bound child ran ${c}" "code ${code}, out: ${out}"
 done
 hook role-guard.sh "$(guard_in g-unbound Bash 'git push')" PATH="${tmp}/nojq"
-[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'jq is not on PATH' "${tmp}/stderr" \
-  && pass "role-guard: without jq an unbound session gets the jq message and exit 1" || fail "role-guard: without jq the unbound reason is wrong" "code ${code}, out: ${out}, stderr: $(cat "${tmp}/stderr")"
+[ "${code}" -eq 0 ] && [[ "${out}" == *'"systemMessage":"role-guard: jq is not on PATH'* ]] && grep -q 'jq is not on PATH' "${tmp}/stderr" \
+  && pass "role-guard: without jq an unbound session runs with a jq warning (exit 0, onFailure block)" || fail "role-guard: without jq the unbound reason is wrong" "code ${code}, out: ${out}, stderr: $(cat "${tmp}/stderr")"
 hook role-guard.sh "$(guard_in g-implement mcp__ccd_session_mgmt__clear_session g-other)" PATH="${tmp}/nojq"
 [ "${code}" -eq 0 ] && [[ "${out}" == *'"permissionDecision":"ask"'* ]] && [[ "${out}" == *'jq is not on PATH'* ]] \
   && pass "role-guard: without jq a clear_session asks" || fail "role-guard: without jq a clear_session passed with no decision" "code ${code}, out: ${out}"
@@ -882,6 +882,8 @@ for t in Write Edit NotebookEdit; do
 done
 jq -e '[.hooks.PreToolUse[] | select(.hooks[].command == "\"${CLAUDE_PLUGIN_ROOT}/hooks/role-guard.sh\"") | .matcher] as $m | ["Edit", "Write", "NotebookEdit"] | all(. as $t | $m | any(. as $x | $t | test("^(" + $x + ")$")))' "${hooks}/hooks.json" >/dev/null \
   && pass "role-guard: hooks.json routes Edit, Write and NotebookEdit to the guard" || fail "role-guard: hooks.json does not route Edit, Write and NotebookEdit to role-guard.sh"
+jq -e '[.hooks.PreToolUse[].hooks[] | select(.command | test("(role|board-read)-guard\\.sh")) | .onFailure] | length == 2 and all(. == "block")' "${hooks}/hooks.json" >/dev/null \
+  && pass "guards: hooks.json blocks the call when role-guard or board-read-guard fails (onFailure block)" || fail "guards: a guard hook fails open (no onFailure block)"
 
 # 4j. outward MCP tools: denied for a child, open for the orchestrator and unbound sessions
 mcp_in() { jq -cn --arg s "$1" --arg t "$2" --arg id "${3:-}" '{hook_event_name:"PreToolUse",session_id:$s,tool_name:$t,tool_input:{session_id:$id,title:"x"}}'; }
@@ -1189,14 +1191,14 @@ brg_deny && [[ "${out}" == *'jq is not on PATH'* ]] && pass "board-read: no jq d
 brg "$(sp_in Agent story-reader haiku)" PATH="${tmp}/nojq"
 brg_deny && pass "board-read: no jq denies a reader spawn" || fail "board-read: no jq let a reader spawn pass" "code ${code}, ${out}"
 brg "$(br_in C1 Bash 'git status')" PATH="${tmp}/nojq"
-[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'jq is not on PATH' "${tmp}/stderr" && pass "board-read: no jq on git status exits 1 and names jq" || fail "board-read: no jq on git status was not loud" "code ${code}, ${out}"
+[ "${code}" -eq 0 ] && [[ "${out}" == *'"systemMessage":"board-read-guard: jq is not on PATH'* ]] && grep -q 'jq is not on PATH' "${tmp}/stderr" && pass "board-read: no jq on git status runs with a jq warning" || fail "board-read: no jq on git status was not loud" "code ${code}, ${out}"
 mkdir -p "${tmp}/noperl"
 for c in bash dirname cat grep tr; do ln -s "$(command -v "${c}")" "${tmp}/noperl/${c}"; done
 printf '#!/bin/sh\nPATH=%s exec jq "$@"\n' "'${PATH}'" >"${tmp}/noperl/jq" && chmod +x "${tmp}/noperl/jq"
 brg "$(br_in C1 Bash 'gh issue view 3')" PATH="${tmp}/noperl"
 brg_deny && [[ "${out}" == *'Check perl'* ]] && pass "board-read: no perl denies a board read and names perl" || fail "board-read: no perl let a board read pass" "code ${code}, ${out}"
 brg "$(br_in C1 Bash 'git status')" PATH="${tmp}/noperl"
-[ "${code}" -eq 1 ] && [ -z "${out}" ] && grep -q 'Check perl' "${tmp}/stderr" && pass "board-read: no perl on git status exits 1 and names perl" || fail "board-read: no perl on git status was not loud" "code ${code}, ${out}"
+[ "${code}" -eq 0 ] && [[ "${out}" == *'"systemMessage":"board-read-guard: the command check'* ]] && grep -q 'Check perl' "${tmp}/stderr" && pass "board-read: no perl on git status runs with a perl warning" || fail "board-read: no perl on git status was not loud" "code ${code}, ${out}"
 brg "$(br_in C8 Bash 'git status')" PATH="${tmp}/noperl"
 brg_deny && pass "board-read: no perl denies every command of the reader" || fail "board-read: no perl let the reader run a command" "code ${code}, ${out}"
 brg "$(br_in C1 Bash 'gh issue view 3 --comments "oops')"
@@ -1285,7 +1287,7 @@ reader_lines_missing() { # reader_lines_missing <file>...: prints each line that
   grep -n -H -E 'gh issue view|az boards work-item show|\{\{BOARD_SHOW\}\}' "$@" | grep -v 'story-reader'
   return 0
 }
-o="$(reader_lines_missing "${story}/SKILL.md" "${story}"/briefs/*.md)"
+o="$(reader_lines_missing "${story}/SKILL.md" "${story}/parallel.md" "${story}/guards.md" "${story}"/briefs/*.md)"
 [ -z "${o}" ] && pass "reader: every line of /story and the briefs that names a board read names the story-reader agent" || fail "reader: a board read outside the story-reader agent" "${o}"
 printf 'Run {{BOARD_SHOW}}.\n' >"${tmp}/brief-read.md"
 [ -n "$(reader_lines_missing "${tmp}/brief-read.md")" ] && pass "reader: a brief line that runs {{BOARD_SHOW}} itself fails" || fail "reader: a direct board read in a brief passed"
@@ -1422,6 +1424,21 @@ out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/
 [ "${code}" -eq 1 ] && [[ "${out}" == *"the plan claims './src/'. Write the path from the repo root"* ]] && pass "groups: scope refuses a claim with a leading ./" || fail "groups: scope with a ./ claim" "${out}"
 out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_base}" 2>&1)"; code=$?
 [ "${code}" -eq 0 ] && [ "${out}" = "SCOPE ok" ] && pass "groups: scope: only claimed files changed" || fail "groups: scope ok" "${out}"
+# A claim path may hold spaces: two different files must stay two claims.
+sg_plan "${tmp}/sg-space.md" '| 1 | T | - | `docs/User Guide.md`, `src/x.cs` | - |' '| 2 | T | - | `docs/UserGuide.md` | - |'
+sg_run "${tmp}/sg-space.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"TRACK t1 1"* && "${out}" == *"TRACK t2 2"* && "${out}" != *"JOIN"* ]] \
+  && pass "groups: a path with a space is not merged with the same path without it" || fail "groups: path with a space" "${out}"
+sg_plan "${tmp}/sg-space2.md" '| 1 | T | - | `docs/User Guide.md` | - |' '| 2 | T | - | `docs/User Guide.md` | - |'
+sg_run "${tmp}/sg-space2.md"
+[ "${code}" -eq 0 ] && [[ "${out}" == *"JOIN 1 2 file docs/User Guide.md"* ]] \
+  && pass "groups: two claims of one path with a space share a track" || fail "groups: same path with a space" "${out}"
+sg_space_base="$(git -C "${sgg}" rev-parse HEAD)"
+echo g >"${sgg}/src/User Guide.md" && git -C "${sgg}" add . && git -C "${sgg}" commit -qm guide
+sg_plan "${tmp}/sg-scopespace.md" '| 1 | T | - | `src/User Guide.md` | A |'
+out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scopespace.md" 1 "${sg_space_base}" 2>&1)"; code=$?
+[ "${code}" -eq 0 ] && [ "${out}" = "SCOPE ok" ] && pass "groups: scope: a claimed path with a space covers its change" || fail "groups: scope with a space" "${out}"
+git -C "${sgg}" rm -q "src/User Guide.md" && git -C "${sgg}" commit -qm unguide
 mkdir -p "${sgg}/lib" && echo m >"${sgg}/lib/other.cs" && git -C "${sgg}" add . && git -C "${sgg}" commit -qm other && sg_mv="$(git -C "${sgg}" rev-parse HEAD)"
 git -C "${sgg}" mv lib/other.cs src/moved.cs && git -C "${sgg}" commit -qm move
 out="$(cd "${sgg}" && STORY_CONFIG="${tmp}/sg-cfg.json" "${sg}" --scope "${tmp}/sg-scope.md" 1 "${sg_mv}" 2>&1)"; code=$?
@@ -1458,11 +1475,14 @@ parallel_skill_bad() { # parallel_skill_bad <SKILL.md>: prints each part of the 
   done
   return 0
 }
-o="$(parallel_skill_bad "${story}/SKILL.md")"
+# The parallel procedure lives in parallel.md, read on demand; SKILL.md must send the orchestrator there.
+cat "${story}/SKILL.md" "${story}/parallel.md" >"${tmp}/story-parallel.md"
+grep -qF 'read `parallel.md` beside this file' "${story}/SKILL.md" && pass "parallel: /story sends the orchestrator to parallel.md" || fail "parallel: /story does not name parallel.md"
+o="$(parallel_skill_bad "${tmp}/story-parallel.md")"
 [ -z "${o}" ] && pass "parallel: /story names story-groups.sh, the gate question, the scope check, the merge go and the track DONE row" || fail "parallel: /story lacks a part of the parallel procedure" "${o}"
-grep -v 'story-groups.sh" "<plan path>"' "${story}/SKILL.md" >"${tmp}/no-groups.md"
+grep -v 'story-groups.sh" "<plan path>"' "${tmp}/story-parallel.md" >"${tmp}/no-groups.md"
 [ -n "$(parallel_skill_bad "${tmp}/no-groups.md")" ] && pass "parallel: a /story without the story-groups.sh gate fails" || fail "parallel: a /story without story-groups.sh passed"
-grep -v 'waits for its base' "${story}/SKILL.md" >"${tmp}/no-wait.md"
+grep -v 'waits for its base' "${tmp}/story-parallel.md" >"${tmp}/no-wait.md"
 [[ "$(parallel_skill_bad "${tmp}/no-wait.md")" == *"waits for its base"* ]] && pass "parallel: a /story whose scheduler has no handler for a waiting track fails" || fail "parallel: a scheduler without the waiting-track handler passed"
 for want in 'git cherry-pick <base sha>..<track branch>' 'git cherry HEAD <track branch> <base sha>' 'git cherry-pick --abort' 'next: #{{STORY_ID}} merge' 'status-<track>.md'; do
   grep -qF -- "${want}" "${story}/briefs/implement.md" && pass "parallel: the implement brief holds the merge step '${want}'" || fail "parallel: the implement brief lacks '${want}'"
@@ -1481,7 +1501,7 @@ unquoted_plan_path() { # unquoted_plan_path <file>...: prints each story-groups.
   grep -n -H -E 'story-groups\.sh" (--scope )?(\{\{PLANS\}\}|<plan path>)' "$@"
   return 0
 }
-o="$(unquoted_plan_path "${story}/SKILL.md" "${story}"/briefs/*.md)"
+o="$(unquoted_plan_path "${story}/SKILL.md" "${story}/parallel.md" "${story}"/briefs/*.md)"
 [ -z "${o}" ] && pass "parallel: every story-groups.sh command quotes the plan path, which can hold spaces" || fail "parallel: an unquoted plan path" "${o}"
 printf 'Run `"{{PLUGIN}}/hooks/story-groups.sh" --scope {{PLANS}}/{{SLUG}}.md 1 abc`.\n' >"${tmp}/unquoted.md"
 [ -n "$(unquoted_plan_path "${tmp}/unquoted.md")" ] && pass "parallel: an unquoted plan path fails" || fail "parallel: an unquoted plan path passed"

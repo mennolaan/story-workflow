@@ -83,7 +83,8 @@ rows() {
       if (l == "-") l = ""
       gsub(/#/, "", t); gsub(/[ \t]+/, "", t)
       gsub(/[ \t]+/, "", d); gsub(/#/, "", d)
-      gsub(/[ \t]+/, "", f)
+      # Claims are separated by commas; a path keeps its inner spaces.
+      gsub(/[ \t]*,[ \t]*/, ",", f)
       printf "%s\037%s\037%s\037%s\037%s\n", t, toupper(w), d, f, l
     }
     END { if (!seen) exit 3 }
@@ -98,6 +99,16 @@ claim_path() {
   printf '%s' "${p}"
 }
 claim_region() { case "$1" in *"#"*) printf '%s' "${1#*#}" ;; esac; }
+
+# split_claims <files cell> <array name>: the comma-separated claims of a cell,
+# one array element each. A path may hold spaces, so never word-split a cell.
+split_claims() {
+  local IFS=, part out=()
+  # shellcheck disable=SC2206 # IFS is a comma and globbing is off (set -f)
+  local parts=($1)
+  for part in "${parts[@]}"; do [ -n "${part}" ] && out[${#out[@]}]="${part}"; done
+  eval "$2=(\${out[@]+\"\${out[@]}\"})"
+}
 
 # claim_bad <claim>: exit 0 when the path of the claim is not a plain path from
 # the repo root. Two spellings of one file would pass the overlap test.
@@ -157,7 +168,8 @@ plan_claims() {
   while IFS=$'\037' read -r t w d f _; do
     case "${want}" in *",${t},"*) ;; *) continue ;; esac
     [ "${f}" = "-" ] && continue
-    for c in ${f//,/ }; do printf '%s\n' "${c}"; done
+    split_claims "${f}" CL
+    for c in ${CL[@]+"${CL[@]}"}; do printf '%s\n' "${c}"; done
   done < <(rows "${plan}")
 }
 
@@ -204,7 +216,8 @@ while IFS=$'\037' read -r t w d f l; do
   [ -n "${f}" ] || die "task ${t} has an empty Files cell. Write - when it touches no file."
   if [ "${w}" = T ] && [ "${f}" = "-" ]; then die "task ${t} is wave T and claims no file. A track task must name its files."; fi
   if [ "${f}" != "-" ]; then
-    for c in ${f//,/ }; do
+    split_claims "${f}" CL
+    for c in ${CL[@]+"${CL[@]}"}; do
       if claim_bad "${c}"; then die "task ${t} claims '${c}'. ${claim_rule}"; fi
     done
   fi
@@ -234,7 +247,8 @@ refused=0
 i=0
 while [ "${i}" -lt "${n}" ]; do
   if [ "${W[$i]}" = T ]; then
-    for c in ${F[$i]//,/ }; do
+    split_claims "${F[$i]}" CL
+    for c in ${CL[@]+"${CL[@]}"}; do
       p="$(claim_path "${c}")"
       if is_shared "${p}"; then
         W[i]=I; refused=1
@@ -293,8 +307,10 @@ while [ "${i}" -lt "${n}" ]; do
       for d in $(deps_of "${i}"); do [ "${d}" = "${T[$j]}" ] && why="depends"; done
       for d in $(deps_of "${j}"); do [ "${d}" = "${T[$i]}" ] && why="depends"; done
       if [ -z "${why}" ]; then
-        for ca in ${F[$i]//,/ }; do
-          for cb in ${F[$j]//,/ }; do
+        split_claims "${F[$i]}" CA
+        split_claims "${F[$j]}" CB
+        for ca in ${CA[@]+"${CA[@]}"}; do
+          for cb in ${CB[@]+"${CB[@]}"}; do
             if overlap "${ca}" "${cb}"; then why="file $(claim_path "${ca}")"; break 2; fi
           done
         done

@@ -72,6 +72,15 @@ def git(*args):
     return subprocess.check_output(["git", *args], stderr=subprocess.PIPE).decode().strip()
 
 
+def commit(ref):
+    return git("rev-parse", "--verify", ref + "^{commit}")
+
+
+def ancestor(older, newer):
+    return subprocess.call(["git", "merge-base", "--is-ancestor", older, newer],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+
 def revision():
     need(not git("status", "--porcelain", "--untracked-files=all"),
          "commit source changes before checks/review; the working tree must be clean (ignore .plans/)")
@@ -362,7 +371,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plans", required=True)
     parser.add_argument("--config", required=True)
-    parser.add_argument("action", choices=["freeze", "check", "run", "gate", "trace", "reset"])
+    parser.add_argument("action", choices=["freeze", "pin", "check", "risk", "run", "gate", "trace", "reset"])
     parser.add_argument("slug")
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -377,10 +386,16 @@ def main():
     state = protected / ("review-" + slug)
     state.mkdir(exist_ok=True)
     frozen_path = state / "contract.json"
+    bases_path = state / "bases.json"
     if args.action == "freeze":
-        need(role == "orchestrator" and len(args.args) in (1, 2), "only the orchestrator freezes an approved acceptance contract")
-        strict = len(args.args) == 2
-        need(not strict or args.args[1] == "--require-traceability", "unknown freeze option")
+        need(role == "orchestrator" and args.args, "only the orchestrator freezes an approved acceptance contract")
+        options = args.args[1:]
+        strict = "--require-traceability" in options
+        if strict:
+            options.remove("--require-traceability")
+        need(len(options) == 2 and options[0] == "--base",
+             "freeze: <slug> <acceptance.json> [--require-traceability] --base <original base sha>")
+        story_base = commit(options[1])
         source = Path(args.args[0]).resolve()
         contract = read(source)
         contract_ok(contract)
@@ -400,13 +415,33 @@ def main():
              "checksOnly applies only to tasks of a track; foundation and integrated reviews stay required")
         with lock(state / "contract.lock"):
             atomic(frozen_path, {"source": str(source), "hash": digest(contract), "contract": contract, "scopes": scopes})
-        print(json.dumps({"contractHash": digest(contract), "frozen": str(frozen_path)}))
+            # Keep track pins that still descend from the (possibly new) story base.
+            old = read(bases_path)["tracks"] if bases_path.exists() else {}
+            tracks = {name: sha for name, sha in old.items() if name in scopes and ancestor(story_base, sha)}
+            atomic(bases_path, {"story": story_base, "tracks": tracks})
+        print(json.dumps({"contractHash": digest(contract), "frozen": str(frozen_path), "base": story_base}))
         return
     frozen = read(frozen_path)
     need(digest(frozen["contract"]) == frozen["hash"], "frozen contract is corrupt")
     need(digest(read(frozen["source"])) == frozen["hash"], "acceptance contract changed; orchestrator must approve and freeze it again")
     contract = frozen["contract"]
     contract_ok(contract)
+    need(bases_path.exists(), "no pinned review base; the orchestrator must freeze again with --base <original base sha>")
+    bases = read(bases_path)
+    if args.action == "pin":
+        # The orchestrator pins a track's base: the reviewed foundation sha, or
+        # the story base when the plan has no foundation.
+        need(role == "orchestrator" and len(args.args) == 2, "pin: only the orchestrator, as pin <slug> <track scope> <sha>")
+        scope = named(args.args[0])
+        need(scope.startswith("track-") and scope in frozen["scopes"], "pin applies to a track scope of the frozen plan")
+        sha = commit(args.args[1])
+        need(ancestor(bases["story"], sha), "a track base must descend from the story base")
+        with lock(state / "contract.lock"):
+            bases = read(bases_path)
+            bases["tracks"][scope] = sha
+            atomic(bases_path, bases)
+        print(json.dumps({"status": "BASE PINNED", "scope": scope, "base": sha}))
+        return
     policy = read(args.config).get("handoffReview", {})
     need(isinstance(policy, dict) and not (set(policy) - {"model", "effort", "maxRounds", "maxParallel", "timeoutSeconds", "maxCheckFailures"}), "invalid handoffReview config")
     settings = {"effort": "high", "maxRounds": 2, "maxParallel": 3, "timeoutSeconds": 600, "maxCheckFailures": 2, **policy}
@@ -414,6 +449,12 @@ def main():
     for name in ("maxRounds", "maxParallel", "timeoutSeconds", "maxCheckFailures"):
         need(type(settings[name]) is int and settings[name] > 0, "invalid " + name)
     need(settings.get("model") is None or text(settings["model"]), "invalid review model")
+    risk = read(args.config).get("risk", {}).get("crap")
+    need(risk is None or (isinstance(risk, dict) and risk.get("mode") in ("advisory", "block")
+                          and not (set(risk) - {"mode", "threshold"})
+                          and isinstance(risk.get("threshold", 30), (int, float)) and risk.get("threshold", 30) > 0),
+         "invalid risk.crap config: {\"mode\": \"advisory\"|\"block\", \"threshold\": 30}")
+    threshold = float(risk.get("threshold", 30)) if risk else None
     need(len(args.args) >= 2, "scope and arguments are required; see skills/story/review.md")
     scope = named(args.args[0])
     if role == "implement" and track:
@@ -424,6 +465,14 @@ def main():
         need(scope == "pr", "invalid PR review scope")
     folder = Path(args.plans).resolve() / (slug + ".d") / "reviews" / scope
     folder.mkdir(parents=True, exist_ok=True)
+
+    def pinned_base():
+        if scope.startswith("track-"):
+            has_foundation = bool(frozen["scopes"].get("foundation"))
+            pinned = bases["tracks"].get(scope) or (None if has_foundation else bases["story"])
+            need(pinned, "no pinned base for " + scope + "; the orchestrator pins it after the foundation review (pin)")
+            return pinned
+        return bases["story"]
     receipt = state / (scope + ".json")
     if args.action == "reset":
         # The orchestrator's logged decision that a scope gets new rounds,
@@ -475,6 +524,44 @@ def main():
         print(json.dumps({"evidence": str(run / "check.json"), **record}))
         need(code == 0 and same, "check failed, timed out, or changed the reviewed source; evidence was saved")
         return
+    if args.action == "risk":
+        # The CRAP of the changed functions, computed here from a coverage
+        # report of this revision, bound to the pinned base and current tree.
+        need(risk, "risk: no risk.crap block in the story config; CRAP is off for this repo")
+        rest = args.args[1:]
+        complexity = None
+        if "--complexity" in rest:
+            at = rest.index("--complexity")
+            need(at + 1 < len(rest), "risk: --complexity needs a lizard CSV path")
+            complexity = rest[at + 1]
+            rest = rest[:at] + rest[at + 2:]
+        need(len(rest) >= 2, "risk: <scope> <base-sha> <coverage file> [<coverage file>...] [--complexity <lizard.csv>]")
+        base = commit(rest[0])
+        need(base == pinned_base(), "risk base " + base[:12] + " is not the pinned base of " + scope)
+        current = revision()
+        command = [sys.executable, str(Path(__file__).with_name("crap.py")), "--base", base, "--head", current["head"],
+                   "--threshold", str(threshold)]
+        for name in rest[1:]:
+            need(Path(name).is_file(), "risk: no such coverage file: " + name)
+            command += ["--coverage", name]
+        if complexity:
+            need(Path(complexity).is_file(), "risk: no such complexity file: " + complexity)
+            command += ["--complexity", complexity]
+        result = subprocess.run(command, capture_output=True, text=True)
+        need(result.returncode == 0, "crap.py failed: " + result.stderr.strip()[-500:])
+        data = json.loads(result.stdout)
+        need(data["head"] == current["head"] and data["base"] == base, "crap.py reported another revision")
+        need(revision() == current, "source changed while the risk report was computed")
+        run = folder / ("risk-" + uuid.uuid4().hex)
+        run.mkdir()
+        atomic(run / "report.json", data)
+        record = {**current, "base": base, "contractHash": frozen["hash"], "threshold": threshold,
+                  "recordedAtNs": time.time_ns(), "report": str(run / "report.json"),
+                  "reportHash": file_hash(run / "report.json")}
+        atomic(run / "risk.json", record)
+        print(json.dumps({"evidence": str(run / "risk.json"), "summary": data["summary"],
+                          "over": [r for r in data["functions"] if r["over"]]}))
+        return
     need(len(args.args) in (3, 4), "run/gate/trace: <scope> <task,task|all> <base-sha> [dismissals.json for gate/trace]")
     need(args.action in ("gate", "trace") or len(args.args) == 3, "dismissals are accepted by gate/trace only")
     if args.action == "trace":
@@ -490,29 +577,56 @@ def main():
                 and (scope in ("integrated", "pr") or c["stage"] == "handoff")]
     need(criteria and all(set(c["tasks"]) <= set(tasks) for c in criteria), "handoff splits a criterion that needs several tasks")
     current = revision()
-    base = git("rev-parse", "--verify", args.args[2] + "^{commit}")
-    need(subprocess.call(["git", "merge-base", "--is-ancestor", base, current["head"]]) == 0, "review base must be an ancestor of HEAD")
+    base = commit(args.args[2])
+    pinned = pinned_base()
+    need(base == pinned, "review base " + base[:12] + " is not the pinned base " + pinned[:12] + " of " + scope)
+    need(ancestor(base, current["head"]), "review base must be an ancestor of HEAD")
     checks = []
     covered = set()
+    # The newest record per (criterion, command): a rerun of the same command
+    # supersedes its earlier result, but a passing different command never
+    # hides a failing one. A new commit starts fresh.
     latest_check = {}
     for path in sorted(folder.glob("check-*/check.json"), key=lambda p: read(p)["recordedAtNs"]):
         check = read(path)
         if all(check.get(k) == current[k] for k in current) and check.get("contractHash") == frozen["hash"]:
             for criterion in check["criteria"]:
-                latest_check[criterion] = path
-    for path in sorted(set(latest_check[c["id"]] for c in criteria if c["id"] in latest_check)):
+                latest_check[(criterion, json.dumps(check["command"]))] = path
+    scoped_ids = {c["id"] for c in criteria}
+    for path in sorted(set(p for (criterion, _), p in latest_check.items() if criterion in scoped_ids)):
         check = read(path)
         need(file_hash(check["log"]) == check["logHash"], "check output was changed after capture")
-        need(check["exitCode"] == 0 and check["unchanged"], "a current check failed; fix or resolve the block before review")
+        need(check["exitCode"] == 0 and check["unchanged"],
+             "a current check failed (" + " ".join(map(str, check["command"]))[:200] + "); rerun it until it passes, "
+             "or commit a fix; a different passing check does not replace it")
         checks.append({"record": str(path), "hash": file_hash(path), **check})
         covered.update(check["criteria"])
     need({c["id"] for c in criteria} <= covered, "missing passing evidence for scoped acceptance criteria")
+    change_risk = None
+    if risk:
+        records = [read(p) for p in folder.glob("risk-*/risk.json")]
+        records = [r for r in records if r["head"] == current["head"] and r["tree"] == current["tree"]
+                   and r["base"] == base and r["contractHash"] == frozen["hash"] and r["threshold"] == threshold]
+        need(records, "missing CRAP report for this revision: run the tests with coverage, then "
+                      "story-review.sh risk <slug> " + scope + " <base-sha> <coverage file>")
+        latest_risk = max(records, key=lambda r: r["recordedAtNs"])
+        need(file_hash(latest_risk["report"]) == latest_risk["reportHash"], "CRAP report was changed after capture")
+        data = read(latest_risk["report"])
+        over = [r for r in data["functions"] if r["over"]]
+        if risk["mode"] == "block":
+            need(not over, "CRAP over " + str(threshold) + " in changed functions: "
+                 + ", ".join(r["function"] + " " + str(r["crap"]) for r in over[:5])
+                 + "; add tests for their decisions or simplify them (risk.crap.mode block)")
+        change_risk = {"record": latest_risk["report"], "hash": latest_risk["reportHash"], "threshold": threshold,
+                       "over": over, "top": data["functions"][:10], "unmeasured": data["unmeasured"]}
     if scope.startswith("track-") and set(tasks) <= set(contract.get("checksOnly", {})):
         print(json.dumps({"status": "CHECKS ONLY", **current, "tasks": tasks,
                           "reason": {task: contract["checksOnly"][task] for task in tasks}}))
         return
     identity = {**current, "base": base, "tasks": sorted(tasks), "contractHash": frozen["hash"], "checks": checks,
                 "reviewSettings": {"model": settings.get("model", "configured-default"), "effort": settings["effort"]}}
+    if change_risk:
+        identity["risk"] = {"record": change_risk["record"], "hash": change_risk["hash"]}
     inputs = digest(identity)
     with lock(state / (scope + ".lock"), blocking=False):
         history = read(receipt) if receipt.exists() else {"attempts": []}
@@ -553,7 +667,10 @@ def main():
                           "Skip style, unrelated cleanup and speculative issues. A blocking finding needs a concrete failure and evidence. "
                           "Return exactly the schema. Assess only the criterion IDs supplied below. "
                           "On a follow-up, focus on changes since the previous reviewed head and whether earlier defects are fixed; "
-                          "read surrounding code when needed for correctness. Do not silently rewrite the requirements.\n" +
+                          "read surrounding code when needed for correctness. Do not silently rewrite the requirements. "
+                          "When changeRisk is present, read every function in its over list in full with its tests: high CRAP "
+                          "(complexity squared times uncovered share cubed, plus complexity) marks untested decisions; it is a "
+                          "reason to look, not a finding by itself.\n" +
                           json.dumps({"scope": scope, "identity": identity, "criteria": criteria,
                                       "requirements": [r for r in contract.get("requirements", [])
                                                        if set(r["criteria"]) & {c["id"] for c in criteria}],
@@ -561,6 +678,7 @@ def main():
                                                          "items": [d for d in contract["documentation"]["items"]
                                                                    if set(d["criteria"]) & {c["id"] for c in criteria}]}
                                                         if "documentation" in contract else None),
+                                      "changeRisk": change_risk,
                                       "previousReview": previous, "focusDiffBase": review_base,
                                       "diffCommand": ["git", "diff", review_base, current["head"]]}, indent=2))
                 (run / "prompt.txt").write_text(prompt)

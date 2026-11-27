@@ -27,4 +27,6 @@ Output format, one block per finding, nothing else (no summary, no restating the
 - observed: <what a user, an operator or the bill shows when it triggers; for conform and situate heads: the consequence of the delta>
 - evidence: <repo path:line | facts.md entry | unverified (fact-sheet gap): ...>
 
+When facts.md has a "Change risk (CRAP)" section, read every function marked **over** in full, with its tests: complex code with little coverage is where untested decisions hide. A high score is a reason to look, never a finding by itself; report only a concrete failure.
+
 If nothing qualifies, output exactly: none

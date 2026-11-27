@@ -79,7 +79,9 @@ class ReviewTest(unittest.TestCase):
                     "STORY_CONFIG": str(self.config), "STORY_PLANS_DIR": str(self.plans),
                     "FAKE_ARGS": str(self.root / "args.json"), "FAKE_MODE": "pass"}
         self.bind("orchestrator")
-        self.call("freeze", "story", str(self.source))
+        self.call("freeze", "story", str(self.source), "--base", self.base)
+        for track in ("track-A", "track-B"):
+            self.call("pin", "story", track, self.base)
         self.bind("implement", "A")
 
     def write(self, path, data):
@@ -121,20 +123,20 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('model_reasoning_effort="high"', command)
 
     def test_freeze_requires_orchestrator(self):
-        self.call("freeze", "story", str(self.source), error="only the orchestrator")
+        self.call("freeze", "story", str(self.source), "--base", self.base, error="only the orchestrator")
 
     def test_contract_must_cover_claims(self):
         self.bind("orchestrator")
         self.contract["tasks"].append("999")
         self.contract["criteria"].append({"id": "AC999", "tasks": ["999"], "stage": "handoff", "requirement": "extra", "verification": "check"})
         self.write(self.source, self.contract)
-        self.call("freeze", "story", str(self.source), error="exactly the claim tasks")
+        self.call("freeze", "story", str(self.source), "--base", self.base, error="exactly the claim tasks")
 
     def test_contract_requires_whole_story_criterion(self):
         self.bind("orchestrator")
         self.contract["criteria"] = self.contract["criteria"][:-1]
         self.write(self.source, self.contract)
-        self.call("freeze", "story", str(self.source), error="integration criterion")
+        self.call("freeze", "story", str(self.source), "--base", self.base, error="integration criterion")
 
     def test_contract_edits_invalidate_evidence(self):
         self.contract["criteria"][0]["requirement"] = "weaker"
@@ -153,7 +155,7 @@ class ReviewTest(unittest.TestCase):
              "reason": "document approved behavior", "criteria": ["AC104"]}]}
         self.write(self.source, self.contract)
         self.bind("orchestrator")
-        self.call("freeze", "story", str(self.source), "--require-traceability")
+        self.call("freeze", "story", str(self.source), "--base", self.base, "--require-traceability")
         self.bind("implement")
 
     def integrated(self, action="run", error=None, **env):
@@ -165,7 +167,7 @@ class ReviewTest(unittest.TestCase):
 
     def test_new_story_cannot_freeze_without_traceability(self):
         self.bind("orchestrator")
-        self.call("freeze", "story", str(self.source), "--require-traceability", error="require requirements and documentation")
+        self.call("freeze", "story", str(self.source), "--base", self.base, "--require-traceability", error="require requirements and documentation")
 
     def test_frozen_requirement_and_documentation_references_are_validated(self):
         self.traced_contract()
@@ -188,14 +190,14 @@ class ReviewTest(unittest.TestCase):
                 changed = deepcopy(original)
                 mutate(changed)
                 self.write(self.source, changed)
-                self.call("freeze", "story", str(self.source), "--require-traceability", error=error)
+                self.call("freeze", "story", str(self.source), "--base", self.base, "--require-traceability", error=error)
 
     def test_no_documentation_impact_needs_a_recorded_assessment(self):
         self.traced_contract()
         self.contract["documentation"] = {"reason": "checked user/API/operations docs; internal-only refactor", "items": []}
         self.write(self.source, self.contract)
         self.bind("orchestrator")
-        self.call("freeze", "story", str(self.source), "--require-traceability")
+        self.call("freeze", "story", str(self.source), "--base", self.base, "--require-traceability")
 
     def test_trace_derives_coverage_without_another_model_call(self):
         self.traced_contract()
@@ -296,13 +298,92 @@ class ReviewTest(unittest.TestCase):
         (self.repo / "src/a.txt").write_text("dirty")
         self.check(error="working tree must be clean")
 
+    def test_passing_other_command_does_not_hide_a_failing_check(self):
+        self.check(code="raise SystemExit(2)", error="check failed")
+        self.check(code="print('a different, passing check')")
+        self.review(error="a different passing check does not replace it")
+
+    def test_new_commit_clears_a_failed_check(self):
+        self.check(code="raise SystemExit(2)", error="check failed")
+        (self.repo / "src/a.txt").write_text("fixed\n")
+        self.commit("fix")
+        self.check()
+        self.review()
+
+    def test_review_base_must_be_the_pinned_base(self):
+        self.check()
+        head = self.git("rev-parse", "HEAD")
+        self.call("run", "story", "track-A", "102", head, error="is not the pinned base")
+
+    def test_track_review_needs_a_pin_when_the_plan_has_foundation(self):
+        self.bind("orchestrator")
+        self.call("freeze", "story", str(self.source), "--base", self.base)
+        bases = json.loads((self.plans / ".sessions/review-story/bases.json").read_text())
+        self.assertEqual(set(bases["tracks"]), {"track-A", "track-B"})
+        (self.plans / ".sessions/review-story/bases.json").write_text(json.dumps({"story": bases["story"], "tracks": {}}))
+        self.bind("implement", "A")
+        self.check()
+        self.review(error="no pinned base for track-A")
+
+    def test_only_the_orchestrator_pins_and_freeze_needs_a_base(self):
+        self.call("pin", "story", "track-A", self.base, error="only the orchestrator")
+        self.bind("orchestrator")
+        self.call("freeze", "story", str(self.source), error="--base <original base sha>")
+        self.call("pin", "story", "foundation", self.base, error="track scope")
+
+    def risk_setup(self, mode="advisory", threshold=10):
+        self.write(self.config, {"parallel": {"max": 10}, "risk": {"crap": {"mode": mode, "threshold": threshold}}})
+        (self.repo / "src/m.py").write_text("def b(x):\n    if x and x > 1:\n        return 1\n"
+                                            "    elif x:\n        return 2\n    return 3\n")
+        self.commit("code")
+        cov = self.root / "cov.info"
+        cov.write_text("SF:%s\nDA:2,0\nDA:3,0\nDA:4,0\nDA:5,0\nDA:6,0\nend_of_record\n" % (self.repo / "src/m.py"))
+        self.check()
+        return str(cov)
+
+    def test_risk_is_off_without_config(self):
+        self.call("risk", "story", "track-A", self.base, str(self.root / "none.info"), error="CRAP is off")
+
+    def test_advisory_risk_is_required_and_reaches_the_finder(self):
+        cov = self.risk_setup()
+        self.review(error="missing CRAP report")
+        self.call("risk", "story", "track-A", self.git("rev-parse", "HEAD"), cov, error="is not the pinned base")
+        recorded = self.call("risk", "story", "track-A", self.base, cov)
+        self.assertEqual([r["function"] for r in recorded["over"]], ["b"])
+        self.review()
+        prompt = sorted(self.plans.glob("story.d/reviews/track-A/review-*/prompt.txt"))[-1].read_text()
+        data = json.loads(prompt.split("\n", 1)[1])
+        self.assertEqual(data["changeRisk"]["over"][0]["crap"], 20.0)
+        self.assertIn("risk", data["identity"])
+        self.assertEqual(self.review("gate")["status"], "REVIEW OK")
+
+    def test_new_commit_needs_a_new_risk_report(self):
+        cov = self.risk_setup()
+        self.call("risk", "story", "track-A", self.base, cov)
+        (self.repo / "src/a.txt").write_text("again\n")
+        self.commit("more")
+        self.check()
+        self.review(error="missing CRAP report")
+
+    def test_block_mode_refuses_over_threshold(self):
+        cov = self.risk_setup(mode="block")
+        self.call("risk", "story", "track-A", self.base, cov)
+        self.review(error="CRAP over 10.0 in changed functions: b 20.0")
+        self.write(self.config, {"parallel": {"max": 10}, "risk": {"crap": {"mode": "block", "threshold": 30}}})
+        self.review(error="missing CRAP report")  # the threshold is part of the report identity
+        self.call("risk", "story", "track-A", self.base, cov)
+        self.review()
+
     def test_failed_check_is_not_success(self):
         self.check(code="raise SystemExit(2)", error="check failed")
         self.review(error="a current check failed")
 
     def test_recovered_check_can_supersede_failure(self):
-        self.check(code="raise SystemExit(2)", error="check failed")
-        self.check()
+        flag = self.root / "flaky"
+        code = "import pathlib, sys; sys.exit(0 if pathlib.Path(%r).exists() else 2)" % str(flag)
+        self.check(code=code, error="check failed")
+        flag.write_text("now passes")
+        self.check(code=code)
         self.review()
 
     def test_check_cannot_mutate_reviewed_source(self):
@@ -404,7 +485,7 @@ class ReviewTest(unittest.TestCase):
         self.bind("orchestrator")
         self.contract["checksOnly"] = {"102": "approved copy-only change"}
         self.write(self.source, self.contract)
-        self.call("freeze", "story", str(self.source))
+        self.call("freeze", "story", str(self.source), "--base", self.base)
         self.bind("implement", "A")
         self.check()
         self.assertEqual(self.review("gate")["status"], "CHECKS ONLY")
@@ -449,17 +530,17 @@ class ReviewTest(unittest.TestCase):
         self.contract["criteria"].append({"id": "X", "tasks": ["102", "103"], "stage": "handoff",
                                           "requirement": "spans", "verification": "v"})
         self.write(self.source, self.contract)
-        self.call("freeze", "story", str(self.source), error="spans tasks of different safe groups")
+        self.call("freeze", "story", str(self.source), "--base", self.base, error="spans tasks of different safe groups")
         self.contract["criteria"][-1]["stage"] = "integration"
         self.write(self.source, self.contract)
-        self.call("freeze", "story", str(self.source))
+        self.call("freeze", "story", str(self.source), "--base", self.base)
 
     def test_freeze_refuses_checks_only_outside_a_track(self):
         self.bind("orchestrator")
         for task in ("101", "104"):
             self.contract["checksOnly"] = {task: "trivial"}
             self.write(self.source, self.contract)
-            self.call("freeze", "story", str(self.source), error="checksOnly applies only to tasks of a track")
+            self.call("freeze", "story", str(self.source), "--base", self.base, error="checksOnly applies only to tasks of a track")
 
     def test_check_command_secrets_are_redacted(self):
         secret = "sk-live-0123456789abcdef"

@@ -31,11 +31,12 @@
 # each Perl regex in board.reads.
 # Config (.claude/story.json): board.reader false turns the guard off.
 # board.reads and board.readTools are lists of Perl regex strings.
-# Fail loud. Input that is not JSON: exit 1. No jq: deny when the input looks
-# like a board read or a reader spawn, else exit 1. A command the parser
+# Fail loud. Input that is not JSON: exit 1, which blocks the call (hooks.json
+# sets onFailure block). No jq: deny when the input looks like a board read or
+# a reader spawn, else allow with a warning (systemMessage, exit 0). A command the parser
 # cannot parse: a reader is denied, another caller only when the command
 # looks like a board read. A parser failure: a reader is denied, another
-# caller too when the command looks like a board read, else exit 1. A config
+# caller too when the command looks like a board read, else allow with a warning. A config
 # jq cannot read, or a bad regex entry: every command and MCP call is denied,
 # with the file and the entry.
 # Without .claude/story.json every call passes with no output (story_enabled).
@@ -57,8 +58,11 @@ if ! command -v jq >/dev/null 2>&1; then
     printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"board-read-guard: jq is not on PATH, so the guard cannot check this call, which looks like a board read or a story-reader spawn, and denies it. Install jq (brew install jq)."}}'
     exit 0
   fi
+  # Not a board read: the call may run, with a visible warning. Exit 0,
+  # because hooks.json sets onFailure block and any other exit would block it.
   echo "board-read-guard: jq is not on PATH, so the guard did not run. Install it (brew install jq)." >&2
-  exit 1
+  printf '%s\n' '{"systemMessage":"board-read-guard: jq is not on PATH, so the guard did not run. Install it (brew install jq)."}'
+  exit 0
 fi
 # One jq call for the input and one for the config. @sh quotes each value for
 # the shell, so the eval only assigns.
@@ -160,7 +164,8 @@ if [ "${prc}" -ne 0 ]; then
   [ -z "${reader}" ] || deny "the command check (role-guard.pl) failed with exit ${prc}, so the story-reader agent runs no command. Check perl."
   if grep -Eiq "${looks_like_read}" <<<"${cmd}"; then deny "the command check (role-guard.pl) failed with exit ${prc}, and the command looks like a board read. Check perl. ${hint}"; fi
   echo "board-read-guard: the command check (role-guard.pl) failed with exit ${prc}, so the guard did not check the command. Check perl." >&2
-  exit 1
+  printf '{"systemMessage":"board-read-guard: the command check (role-guard.pl) failed with exit %s, so the guard did not check the command. Check perl."}\n' "${prc}"
+  exit 0
 fi
 
 read_hits=""
